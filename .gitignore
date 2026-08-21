@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+.env
+*.log
+coverage/
+.DS_Store
+client/src/renderer/app.bundle.js

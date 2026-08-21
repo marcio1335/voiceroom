@@ -1,0 +1,9 @@
+{
+  "name": "@voiceroom/client",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "socket.io-client": "^4.8.1"
+  }
+}
+

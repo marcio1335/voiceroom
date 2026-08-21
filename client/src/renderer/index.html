@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000; media-src 'self' blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VoiceRoom</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">VOICE ROOM</p>
+          <h1>Converse sem complicação.</h1>
+        </div>
+        <span id="status" class="status" data-type="info">Conectando ao servidor…</span>
+      </header>
+
+      <div id="notice" class="notice" role="alert" hidden></div>
+
+      <section id="landing" class="card landing-card">
+        <h2>Começar uma sala</h2>
+        <p class="muted">Escolha um apelido temporário. Nenhum cadastro é necessário.</p>
+        <label for="display-name">Seu nome</label>
+        <input id="display-name" maxlength="30" autocomplete="off" placeholder="Ex.: Marcio" />
+        <div class="landing-actions">
+          <button id="create-room" class="primary">Criar sala</button>
+          <div class="join-inline">
+            <input id="room-code" maxlength="6" autocomplete="off" placeholder="Código" aria-label="Código da sala" />
+            <button id="join-room">Entrar</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="room" class="room-layout" hidden>
+        <aside class="card room-sidebar">
+          <div class="room-code-row">
+            <div>
+              <span class="muted small">Sala</span>
+              <strong id="active-room-code">------</strong>
+            </div>
+            <button id="copy-room-code" class="icon-button" title="Copiar código" aria-label="Copiar código">Copiar</button>
+          </div>
+          <div class="divider"></div>
+          <div class="section-heading">
+            <h2>Participantes</h2>
+            <span class="pill">máx. 5</span>
+          </div>
+          <ul id="participants" class="participants"></ul>
+          <div class="sidebar-spacer"></div>
+          <label class="small muted" for="microphone-select">Microfone</label>
+          <select id="microphone-select"><option value="">Padrão do Windows</option></select>
+          <div class="microphone-test">
+            <div class="test-heading">
+              <span class="small muted">Teste de retorno</span>
+              <span class="small muted">tempo real</span>
+            </div>
+            <div class="meter" aria-label="Nível do microfone"><span id="microphone-level"></span></div>
+            <button id="test-microphone" class="ghost">Ouvir microfone</button>
+            <span id="microphone-test-status" class="small muted">Use fones para evitar microfonia.</span>
+          </div>
+          <button id="leave-room" class="danger ghost">Sair da sala</button>
+        </aside>
+
+        <section class="card call-card">
+          <div id="screen-stage" class="screen-stage" data-active="false">
+            <div class="empty-stage">
+              <span class="stage-icon">🖥</span>
+              <strong>Nenhuma tela compartilhada</strong>
+              <span class="muted">Quando alguém compartilhar, a tela aparecerá aqui.</span>
+            </div>
+          </div>
+          <div class="call-controls">
+            <button id="microphone" disabled>Ativar microfone</button>
+            <button id="screen-share">Compartilhar tela</button>
+          </div>
+        </section>
+      </section>
+
+      <section id="source-picker" class="source-picker" hidden aria-labelledby="source-picker-title">
+        <div class="source-picker-card">
+          <h2 id="source-picker-title">Escolha o que compartilhar</h2>
+          <p class="muted">Selecione uma janela ou monitor.</p>
+          <div id="source-list" class="source-list"></div>
+          <button id="cancel-source" class="ghost">Cancelar</button>
+        </div>
+      </section>
+    </main>
+    <script src="./app.bundle.js"></script>
+  </body>
+</html>
