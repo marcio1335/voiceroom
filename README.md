@@ -74,7 +74,7 @@ O MVP usa STUN, mas ainda não usa TURN. Pessoas em algumas redes corporativas, 
 
 ## Teste de microfone
 
-Dentro de uma sala, selecione o dispositivo e use **Ouvir microfone**. O app liga um retorno em tempo real local, mostra o nível capturado e não envia esse teste aos participantes. Use fones para evitar microfonia; clique novamente em **Parar retorno** para encerrar.
+Dentro de uma sala, selecione o dispositivo e use **Ouvir microfone**. O app liga um retorno em tempo real local sem o processamento da chamada, mostra o nível capturado e não envia esse teste aos participantes. Use fones para evitar microfonia; clique novamente em **Parar retorno** para encerrar.
 
 ## Limitações conhecidas do MVP
 
