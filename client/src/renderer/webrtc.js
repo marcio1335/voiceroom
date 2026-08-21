@@ -1,5 +1,14 @@
 const { ICE_SERVERS } = require('./config');
 
+function getAudioConstraints(deviceId) {
+  return {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    ...(deviceId ? { deviceId: { exact: deviceId } } : {})
+  };
+}
+
 class PeerManager {
   constructor({ socket, selfId, onRemoteStream = () => {}, onPeerState = () => {}, onError = () => {} }) {
     this.socket = socket;
@@ -15,7 +24,7 @@ class PeerManager {
 
   async startAudio(deviceId) {
     const constraints = {
-      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+      audio: getAudioConstraints(deviceId),
       video: false
     };
     const nextStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -42,7 +51,7 @@ class PeerManager {
   async startMicrophoneLoopback(deviceId, onLevel = () => {}) {
     if (this.microphoneLoopback) return;
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+      audio: getAudioConstraints(deviceId),
       video: false
     });
     const audioContext = new AudioContext();
