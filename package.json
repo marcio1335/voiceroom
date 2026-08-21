@@ -16,9 +16,10 @@
     "test": "node --test tests/*.test.js",
     "check": "node --check server/src/server.js && node --check client/src/main/main.js && node --check client/src/renderer/app.js && node --check client/src/renderer/webrtc.js",
     "bundle:renderer": "node scripts/bundle-renderer.js",
-    "prebuild": "npm run bundle:renderer",
+    "bundle:renderer:production": "node scripts/bundle-renderer.js --production",
+    "prebuild": "npm run bundle:renderer:production",
     "build": "electron-builder --dir",
-    "predist": "npm run bundle:renderer",
+    "predist": "npm run bundle:renderer:production",
     "dist": "electron-builder"
   },
   "devDependencies": {

@@ -19,7 +19,7 @@ Artefatos gerados localmente:
 - `release/win-unpacked/VoiceRoom.exe` — build portátil para smoke test;
 - `release/VoiceRoom Setup 0.1.0.exe` — instalador NSIS.
 
-O servidor ainda precisa ser executado em uma URL pública com HTTPS/WSS para testes entre redes. O padrão local é `http://localhost:3000`.
+O signaling server público está em `https://voiceroom-signaling.onrender.com`. O desenvolvimento local continua usando `http://localhost:3000`.
 
 ## Requisitos
 
@@ -47,23 +47,28 @@ npm run build    # build de diretório do Electron
 npm run dist     # instalador NSIS
 ```
 
-Para apontar o cliente para outro signaling server durante o desenvolvimento, defina `window.VOICEROOM_SIGNALING_SERVER` antes do bundle do renderer ou altere temporariamente `client/src/renderer/config.js`. Em produção, o endpoint deve usar WSS.
+`npm start` e `npm run dev` geram o renderer apontando para `http://localhost:3000`. `npm run build` e `npm run dist` usam `https://voiceroom-signaling.onrender.com`, cuja conexão WebSocket é feita por WSS.
+
+Para substituir o endpoint incorporado em qualquer bundle, exporte `VOICEROOM_SIGNALING_SERVER` antes do comando. Se usar outro host, adicione-o também ao `connect-src` da CSP em `client/src/renderer/index.html`:
+
+```powershell
+$env:VOICEROOM_SIGNALING_SERVER = "https://outro-endpoint.example.com"
+npm run bundle:renderer:production
+Remove-Item Env:VOICEROOM_SIGNALING_SERVER
+```
 
 ## Disponibilizar para amigos
 
-O endereço padrão `localhost` só funciona na máquina que está executando o servidor. Para uso entre computadores:
+O endereço padrão `localhost` só funciona na máquina que está executando o servidor. Para gerar um instalador para uso entre computadores:
 
-1. Publique `server/src/server.js` em um host acessível pela Internet que aceite Node.js e WebSocket.
-2. Configure `HOST=0.0.0.0`, a porta fornecida pelo host e HTTPS/WSS. Verifique `https://SEU-ENDPOINT/readyz`.
-3. Gere o cliente apontando para o endpoint público antes de criar o instalador:
+1. Confirme que o Render responde em `https://voiceroom-signaling.onrender.com/readyz`.
+2. Gere o instalador; o script de produção já incorpora o endpoint público:
 
    ```powershell
-   $env:VOICEROOM_SIGNALING_SERVER = "https://SEU-ENDPOINT"
    npm run dist
-   Remove-Item Env:VOICEROOM_SIGNALING_SERVER
    ```
 
-4. Envie `release/VoiceRoom Setup 0.1.0.exe` aos amigos. Eles não precisam executar o servidor, apenas instalar o cliente.
+3. Envie `release/VoiceRoom Setup 0.1.0.exe` aos amigos. Eles não precisam executar o servidor, apenas instalar o cliente.
 
 O MVP usa STUN, mas ainda não usa TURN. Pessoas em algumas redes corporativas, CGNAT ou firewalls restritivos podem não conseguir estabelecer a chamada. O instalador também não é assinado, então o Windows SmartScreen pode exibir um aviso.
 
