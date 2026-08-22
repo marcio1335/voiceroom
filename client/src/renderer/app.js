@@ -1,5 +1,6 @@
 const { SocketClient } = require('./socket');
 const { PeerManager } = require('./webrtc');
+const { getScreenProfile, normalizeScreenProfile } = require('./screen-quality');
 
 const elements = {
   landing: document.querySelector('#landing'),
@@ -13,9 +14,11 @@ const elements = {
   copyInvite: document.querySelector('#copy-invite-link'),
   participants: document.querySelector('#participants'),
   microphone: document.querySelector('#microphone'),
+  voiceMicrophone: document.querySelector('#voice-microphone'),
+  voiceDeafen: document.querySelector('#voice-deafen'),
   microphoneSelect: document.querySelector('#microphone-select'),
   echoCancellation: document.querySelector('#echo-cancellation'),
-  noiseSuppression: document.querySelector('#noise-suppression'),
+  noiseSuppressionMode: document.querySelector('#noise-suppression-mode'),
   autoGainControl: document.querySelector('#auto-gain-control'),
   processMicrophoneTest: document.querySelector('#process-microphone-test'),
   pushToTalk: document.querySelector('#push-to-talk'),
@@ -32,15 +35,20 @@ const elements = {
   audioSettingsApply: document.querySelector('#audio-settings-apply'),
   audioSettingsReset: document.querySelector('#audio-settings-reset'),
   screen: document.querySelector('#screen-share'),
+  screenShareLabel: document.querySelector('#screen-share-label'),
   screenVolume: document.querySelector('#screen-volume'),
   screenVolumeValue: document.querySelector('#screen-volume-value'),
   screenFullscreen: document.querySelector('#screen-fullscreen'),
+  screenFullscreenLabel: document.querySelector('#screen-fullscreen-label'),
   reconnect: document.querySelector('#reconnect-call'),
   screenAudioStatus: document.querySelector('#screen-audio-status'),
   leave: document.querySelector('#leave-room'),
   screenStage: document.querySelector('#screen-stage'),
   screenEmptyStage: document.querySelector('#screen-empty-stage'),
   screenShareList: document.querySelector('#screen-share-list'),
+  screenDiagnosticsToggle: document.querySelector('#screen-diagnostics-toggle'),
+  screenDiagnostics: document.querySelector('#screen-diagnostics'),
+  screenDiagnosticsList: document.querySelector('#screen-diagnostics-list'),
   sourcePicker: document.querySelector('#source-picker'),
   sourceList: document.querySelector('#source-list'),
   screenQuality: document.querySelector('#screen-quality'),
@@ -49,6 +57,14 @@ const elements = {
   status: document.querySelector('#status'),
   latency: document.querySelector('#latency'),
   notice: document.querySelector('#notice'),
+  appUpdate: document.querySelector('#app-update'),
+  appUpdateTitle: document.querySelector('#app-update-title'),
+  appUpdateMessage: document.querySelector('#app-update-message'),
+  appUpdateInstall: document.querySelector('#app-update-install'),
+  appUpdateDismiss: document.querySelector('#app-update-dismiss'),
+  appUpdateCheck: document.querySelector('#app-update-check'),
+  appUpdateSettingsStatus: document.querySelector('#app-update-settings-status'),
+  appVersionLabel: document.querySelector('#app-version-label'),
   profileBadge: document.querySelector('#profile-badge'),
   profilePhotoInput: document.querySelector('#profile-photo-input'),
   landingAvatar: document.querySelector('#landing-avatar')
@@ -60,6 +76,8 @@ let selfId;
 let roomCode;
 let currentRoom;
 let muted = false;
+let deafened = false;
+let mutedBeforeDeafen = false;
 let sharingScreen = false;
 let screenVolumeLevel = 1;
 let selectedScreenParticipantId = null;
@@ -70,8 +88,13 @@ let reconnectInProgress = false;
 let capturingPttKey = false;
 let pttPressed = false;
 let pttInitialization = null;
-let screenQuality = '720p';
+let screenQuality = 'balanced';
+let appUpdateState = { status: 'unavailable' };
+let appUpdateDismissed = false;
+let appVersion = '';
 const screenAudioSourceIds = new Set();
+const screenStatsByParticipant = new Map();
+const screenQualityWarnings = new Set();
 const speakingParticipants = new Set();
 const speakingMonitors = new Map();
 let speakingAudioContext = null;
@@ -84,7 +107,7 @@ const MAX_PROFILE_AVATAR_LENGTH = 32_000;
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
 const DEFAULT_AUDIO_SETTINGS = Object.freeze({
   echoCancellation: true,
-  noiseSuppression: true,
+  noiseSuppressionMode: 'native',
   autoGainControl: true,
   processMicrophoneTest: false,
   inputGain: 1,
@@ -94,7 +117,6 @@ const DEFAULT_AUDIO_SETTINGS = Object.freeze({
 
 const AUDIO_PROCESSING_LABELS = Object.freeze({
   echoCancellation: 'cancelamento de eco',
-  noiseSuppression: 'supressão de ruído',
   autoGainControl: 'ganho automático'
 });
 
@@ -107,9 +129,12 @@ function clampInputGain(value) {
 function loadAudioSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(AUDIO_SETTINGS_STORAGE_KEY) || '{}');
+    const noiseSuppressionMode = ['native', 'rnnoise', 'off'].includes(saved.noiseSuppressionMode)
+      ? saved.noiseSuppressionMode
+      : saved.noiseSuppression === false ? 'off' : DEFAULT_AUDIO_SETTINGS.noiseSuppressionMode;
     return {
       echoCancellation: saved.echoCancellation !== false,
-      noiseSuppression: saved.noiseSuppression !== false,
+      noiseSuppressionMode,
       autoGainControl: saved.autoGainControl !== false,
       processMicrophoneTest: saved.processMicrophoneTest === true,
       inputGain: clampInputGain(saved.inputGain),
@@ -257,7 +282,7 @@ function persistAudioSettings() {
 
 function syncAudioSettingsControls() {
   elements.echoCancellation.checked = audioSettings.echoCancellation;
-  elements.noiseSuppression.checked = audioSettings.noiseSuppression;
+  elements.noiseSuppressionMode.value = audioSettings.noiseSuppressionMode;
   elements.autoGainControl.checked = audioSettings.autoGainControl;
   elements.processMicrophoneTest.checked = audioSettings.processMicrophoneTest;
   elements.pushToTalk.checked = audioSettings.pushToTalk;
@@ -269,7 +294,7 @@ function syncAudioSettingsControls() {
 function collectAudioSettingsFromControls() {
   return {
     echoCancellation: elements.echoCancellation.checked,
-    noiseSuppression: elements.noiseSuppression.checked,
+    noiseSuppressionMode: elements.noiseSuppressionMode.value,
     autoGainControl: elements.autoGainControl.checked,
     processMicrophoneTest: elements.processMicrophoneTest.checked,
     inputGain: clampInputGain(Number(elements.microphoneGain.value) / 100),
@@ -323,7 +348,7 @@ function setParticipantVolume(participantId, value) {
 }
 
 function setScreenQuality(value) {
-  screenQuality = value === '480p' ? '480p' : '720p';
+  screenQuality = normalizeScreenProfile(value);
   if (elements.screenQuality) elements.screenQuality.value = screenQuality;
   try { localStorage.setItem(SCREEN_QUALITY_STORAGE_KEY, screenQuality); } catch { /* armazenamento opcional */ }
 }
@@ -333,7 +358,7 @@ function loadLocalPreferences() {
     const savedName = localStorage.getItem(DISPLAY_NAME_STORAGE_KEY);
     if (savedName) elements.name.value = savedName;
     const savedQuality = localStorage.getItem(SCREEN_QUALITY_STORAGE_KEY);
-    if (savedQuality) screenQuality = savedQuality === '480p' ? '480p' : '720p';
+    if (savedQuality) screenQuality = normalizeScreenProfile(savedQuality);
   } catch { /* armazenamento opcional */ }
   setScreenQuality(screenQuality);
 }
@@ -344,12 +369,30 @@ function renderAudioProcessingStatus(settings = {}) {
     elements.audioProcessingStatus.dataset.type = 'info';
     return;
   }
+  const selectedMode = audioSettings.noiseSuppressionMode;
+  const activeMode = peerManager.getNoiseSuppressionMode?.() || selectedMode;
+  if (selectedMode === 'rnnoise' && activeMode === 'rnnoise') {
+    elements.audioProcessingStatus.textContent = 'RNNoise aplicado localmente ao áudio enviado (pode usar mais CPU).';
+    elements.audioProcessingStatus.dataset.type = 'success';
+    return;
+  }
+  if (selectedMode === 'rnnoise') {
+    elements.audioProcessingStatus.textContent = 'RNNoise indisponível; o modo nativo está sendo usado.';
+    elements.audioProcessingStatus.dataset.type = 'warning';
+    return;
+  }
   const unsupported = Object.entries(AUDIO_PROCESSING_LABELS)
     .filter(([key]) => settings[key] !== undefined && settings[key] !== audioSettings[key])
     .map(([, label]) => label);
+  const expectedNativeNoiseSuppression = selectedMode === 'native';
+  if (settings.noiseSuppression !== undefined && settings.noiseSuppression !== expectedNativeNoiseSuppression) {
+    unsupported.push('supressão de ruído');
+  }
   elements.audioProcessingStatus.textContent = unsupported.length
     ? `O dispositivo não confirmou: ${unsupported.join(', ')}.`
-    : 'Processamento aplicado ao áudio enviado.';
+    : selectedMode === 'off'
+      ? 'Supressão de ruído desativada; cancelamento de eco e ganho seguem as opções acima.'
+      : 'Processamento nativo aplicado ao áudio enviado.';
   elements.audioProcessingStatus.dataset.type = unsupported.length ? 'warning' : 'success';
 }
 
@@ -376,7 +419,9 @@ async function changeAudioProcessing() {
     }
     const message = error.code === 'AUDIO_CONSTRAINT_UNSUPPORTED'
       ? 'Este microfone não permite alterar essa opção durante a chamada.'
-      : 'Não foi possível alterar o processamento do microfone.';
+      : error.code === 'RNNOISE_UNAVAILABLE'
+        ? 'RNNoise não pôde iniciar neste sistema; o modo nativo foi mantido.'
+        : 'Não foi possível alterar o processamento do microfone.';
     showNotice(message);
     renderAudioProcessingStatus(peerManager?.getAudioProcessingSettings() || {});
   }
@@ -424,9 +469,12 @@ async function restartMicrophoneLoopback() {
     elements.microphoneTestStatus.textContent = audioSettings.processMicrophoneTest
       ? 'Retorno processado — use fones para evitar microfonia.'
       : 'Retorno direto — use fones para evitar microfonia.';
-  } catch {
+  } catch (error) {
     elements.testMicrophone.textContent = 'Ouvir microfone';
     elements.microphoneTestStatus.textContent = 'Não foi possível acessar o microfone.';
+    if (error.code === 'RNNOISE_UNAVAILABLE') {
+      elements.microphoneTestStatus.textContent = 'RNNoise não está disponível neste sistema.';
+    }
   }
 }
 
@@ -491,6 +539,105 @@ function showNotice(message, type = 'error') {
   elements.notice.hidden = false;
   window.clearTimeout(showNotice.timeout);
   showNotice.timeout = window.setTimeout(() => { elements.notice.hidden = true; }, 6_000);
+}
+
+function formatUpdateBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  return `${Math.round(bytes / 1_000)} KB`;
+}
+
+function renderAppUpdateSettings() {
+  const state = appUpdateState || {};
+  const status = state.status;
+  if (elements.appVersionLabel) elements.appVersionLabel.textContent = appVersion ? `Versão ${appVersion}` : 'Versão —';
+  if (!elements.appUpdateSettingsStatus || !elements.appUpdateCheck) return;
+
+  let message = 'Verifique se há uma nova versão.';
+  if (status === 'checking') message = 'Verificando atualizações…';
+  else if (status === 'available') message = `Nova versão ${state.version ? `v${state.version} ` : ''}encontrada; download iniciado.`;
+  else if (status === 'downloading') {
+    const percent = Number.isFinite(Number(state.percent)) ? Math.round(state.percent) : 0;
+    message = `Baixando atualização… ${percent}%`;
+  } else if (status === 'downloaded') message = `Atualização ${state.version ? `v${state.version} ` : ''}pronta para instalar.`;
+  else if (status === 'idle') message = 'Você está usando a versão mais recente.';
+  else if (status === 'error' && state.manual) message = state.message || 'Não foi possível verificar agora.';
+  else if (status === 'unavailable') message = 'Disponível apenas na versão instalada.';
+
+  elements.appUpdateSettingsStatus.textContent = message;
+  elements.appUpdateSettingsStatus.dataset.type = status === 'error' ? 'warning' : status === 'downloaded' ? 'success' : 'info';
+  elements.appUpdateCheck.disabled = ['checking', 'available', 'downloading'].includes(status);
+  elements.appUpdateCheck.textContent = status === 'downloaded'
+    ? 'Instalar atualização'
+    : status === 'checking' ? 'Verificando…' : 'Verificar atualizações';
+}
+
+function renderAppUpdate() {
+  const state = appUpdateState || {};
+  const status = state.status;
+  const visible = ['available', 'downloading', 'downloaded'].includes(status)
+    || (status === 'error' && state.manual === true);
+  if (!elements.appUpdate) return;
+  if (!visible || appUpdateDismissed) {
+    elements.appUpdate.hidden = true;
+    return;
+  }
+
+  const version = state.version ? ` v${state.version}` : '';
+  if (status === 'available') {
+    elements.appUpdateTitle.textContent = `Atualização${version} encontrada`;
+    elements.appUpdateMessage.textContent = 'Download automático iniciado em segundo plano.';
+  } else if (status === 'downloading') {
+    const percent = Number.isFinite(Number(state.percent)) ? Math.round(state.percent) : 0;
+    const transferred = formatUpdateBytes(state.transferred);
+    const total = formatUpdateBytes(state.total);
+    const size = transferred && total ? ` · ${transferred}/${total}` : '';
+    elements.appUpdateTitle.textContent = `Baixando atualização${version}`;
+    elements.appUpdateMessage.textContent = `${percent}%${size}`;
+  } else if (status === 'downloaded') {
+    elements.appUpdateTitle.textContent = `Atualização${version} pronta`;
+    elements.appUpdateMessage.textContent = 'Será instalada ao fechar o VoiceRoom; você também pode instalar agora.';
+  } else {
+    elements.appUpdateTitle.textContent = 'Atualizações indisponíveis';
+    elements.appUpdateMessage.textContent = state.message || 'Não foi possível verificar agora.';
+  }
+  elements.appUpdateInstall.hidden = status !== 'downloaded';
+  elements.appUpdateDismiss.hidden = status === 'downloaded';
+  elements.appUpdate.hidden = false;
+}
+
+function handleAppUpdateState(state) {
+  if (!state || typeof state !== 'object') return;
+  appUpdateState = state;
+  if (state.status === 'downloaded') appUpdateDismissed = false;
+  renderAppUpdate();
+  renderAppUpdateSettings();
+}
+
+async function installApplicationUpdate() {
+  if (elements.appUpdateInstall) {
+    elements.appUpdateInstall.disabled = true;
+    elements.appUpdateInstall.textContent = 'Reiniciando…';
+  }
+  if (elements.appUpdateCheck) elements.appUpdateCheck.disabled = true;
+  try {
+    const started = await window.voiceRoom?.installUpdate?.();
+    if (!started) {
+      if (elements.appUpdateInstall) {
+        elements.appUpdateInstall.disabled = false;
+        elements.appUpdateInstall.textContent = 'Instalar agora';
+      }
+      renderAppUpdateSettings();
+    }
+  } catch {
+    if (elements.appUpdateInstall) {
+      elements.appUpdateInstall.disabled = false;
+      elements.appUpdateInstall.textContent = 'Instalar agora';
+    }
+    renderAppUpdateSettings();
+    showNotice('Não foi possível iniciar a instalação da atualização.');
+  }
 }
 
 function responseError(response) {
@@ -652,12 +799,47 @@ function stopAllSpeakingMonitors() {
   speakingAudioContext = null;
 }
 
+function applyDeafenState() {
+  document.querySelectorAll('audio[data-participant-audio]').forEach((audio) => {
+    const isScreenAudio = audio.dataset.screenAudio === 'true';
+    audio.muted = deafened || (isScreenAudio && screenVolumeLevel === 0);
+  });
+}
+
+function renderVoiceControls() {
+  const hasMicrophone = Boolean(peerManager?.getAudioTrack?.());
+  const microphoneMuted = muted || deafened || !hasMicrophone;
+  const microphoneControl = elements.voiceMicrophone;
+  if (microphoneControl) {
+    microphoneControl.classList.toggle('is-muted', microphoneMuted);
+    microphoneControl.dataset.state = microphoneMuted ? 'muted' : 'active';
+    microphoneControl.setAttribute('aria-pressed', String(!microphoneMuted));
+    microphoneControl.title = deafened
+      ? 'Desative o ensurdecer para ativar o microfone'
+      : microphoneMuted ? 'Ativar microfone' : 'Mutar microfone';
+    microphoneControl.setAttribute('aria-label', microphoneControl.title);
+  }
+
+  const deafenControl = elements.voiceDeafen;
+  if (deafenControl) {
+    deafenControl.classList.toggle('is-muted', deafened);
+    deafenControl.dataset.state = deafened ? 'muted' : 'active';
+    deafenControl.setAttribute('aria-pressed', String(deafened));
+    deafenControl.title = deafened ? 'Ouvir chamada' : 'Ensurdecer chamada';
+    deafenControl.setAttribute('aria-label', deafenControl.title);
+  }
+}
+
 function renderRoom(room) {
   currentRoom = room;
   elements.activeCode.textContent = room.code;
   const screenParticipantIds = getScreenParticipantIds(room);
   elements.screen.disabled = !sharingScreen && screenParticipantIds.length >= 2;
-  elements.screen.textContent = sharingScreen ? 'Parar tela' : 'Compartilhar tela';
+  if (elements.screenShareLabel) {
+    elements.screenShareLabel.textContent = sharingScreen ? 'Parar tela' : 'Compartilhar tela';
+  } else {
+    elements.screen.textContent = sharingScreen ? 'Parar tela' : 'Compartilhar tela';
+  }
   if (watchingScreenParticipantId && !screenParticipantIds.includes(watchingScreenParticipantId)) {
     const stoppedParticipantId = watchingScreenParticipantId;
     watchingScreenParticipantId = null;
@@ -666,6 +848,7 @@ function renderRoom(room) {
   renderScreenShareList(room);
   renderParticipants();
   peerManager?.syncParticipants(room.participants).catch((error) => showNotice(error.message));
+  renderVoiceControls();
 }
 
 function renderScreenShareList(room) {
@@ -701,6 +884,95 @@ function renderScreenShareList(room) {
   }
 }
 
+function formatScreenBitrate(value) {
+  if (!Number.isFinite(Number(value))) return '—';
+  const bitrate = Number(value);
+  return bitrate >= 1_000_000
+    ? `${(bitrate / 1_000_000).toFixed(2)} Mbps`
+    : `${Math.round(bitrate / 1_000)} kbps`;
+}
+
+function formatScreenLoss(value) {
+  if (!Number.isFinite(Number(value))) return '—';
+  return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function formatScreenDecision(value) {
+  return {
+    initial: 'aguardando amostras',
+    good: 'estável',
+    bad: 'rede instável',
+    unknown: 'medindo',
+    'network-degraded': 'reduzida para estabilidade',
+    'network-stable': 'subida após estabilidade',
+    'profile-selected': 'perfil selecionado'
+  }[value] || value || '—';
+}
+
+function appendDiagnosticMetric(container, label, value) {
+  const metric = document.createElement('span');
+  metric.className = 'screen-diagnostic-metric';
+  metric.textContent = `${label}: ${value}`;
+  container.append(metric);
+}
+
+function renderScreenDiagnostics() {
+  if (!elements.screenDiagnosticsList) return;
+  elements.screenDiagnosticsList.replaceChildren();
+  if (!screenStatsByParticipant.size) {
+    const empty = document.createElement('span');
+    empty.className = 'small muted';
+    empty.textContent = 'As métricas aparecem para quem está enviando uma transmissão.';
+    elements.screenDiagnosticsList.append(empty);
+    return;
+  }
+  for (const [participantId, stats] of screenStatsByParticipant) {
+    const participant = currentRoom?.participants?.find((item) => item.participantId === participantId);
+    const row = document.createElement('article');
+    row.className = 'screen-diagnostics-row';
+    const heading = document.createElement('strong');
+    heading.textContent = participant?.displayName || participantId.slice(0, 8);
+    row.append(heading);
+    const metrics = document.createElement('div');
+    metrics.className = 'screen-diagnostics-metrics';
+    const profile = getScreenProfile(stats.effectiveProfile || stats.desiredProfile);
+    appendDiagnosticMetric(metrics, 'perfil', profile.label);
+    appendDiagnosticMetric(metrics, 'resolução', stats.width && stats.height ? `${stats.width}×${stats.height}` : '—');
+    appendDiagnosticMetric(metrics, 'FPS', Number.isFinite(Number(stats.framesPerSecond))
+      ? Number(stats.framesPerSecond).toFixed(1)
+      : '—');
+    appendDiagnosticMetric(metrics, 'bitrate', formatScreenBitrate(stats.bitrate));
+    appendDiagnosticMetric(metrics, 'RTT', Number.isFinite(Number(stats.rttMs)) ? `${Math.round(stats.rttMs)} ms` : '—');
+    appendDiagnosticMetric(metrics, 'perda', formatScreenLoss(stats.lossFraction));
+    appendDiagnosticMetric(metrics, 'codec', stats.codec || '—');
+    appendDiagnosticMetric(metrics, 'estado', formatScreenDecision(stats.lastDecision || stats.reason));
+    row.append(metrics);
+    elements.screenDiagnosticsList.append(row);
+  }
+}
+
+function handleScreenStats(participantId, stats = {}) {
+  if (!participantId) return;
+  if (stats.type === 'screen-quality-warning') {
+    const warningKey = `${participantId}:${stats.code}`;
+    if (screenQualityWarnings.has(warningKey)) return;
+    screenQualityWarnings.add(warningKey);
+    showNotice(stats.message || 'Alguns ajustes de qualidade não foram aceitos pelo sistema.', 'warning');
+    return;
+  }
+  screenStatsByParticipant.set(participantId, stats);
+  renderScreenDiagnostics();
+}
+
+function setScreenDiagnosticsVisible(visible) {
+  const nextVisible = Boolean(visible);
+  if (elements.screenDiagnostics) elements.screenDiagnostics.hidden = !nextVisible;
+  if (elements.screenDiagnosticsToggle) {
+    elements.screenDiagnosticsToggle.setAttribute('aria-expanded', String(nextVisible));
+    elements.screenDiagnosticsToggle.textContent = nextVisible ? 'Ocultar detalhes' : 'Detalhes';
+  }
+}
+
 function enterRoom(result) {
   selfId = result.data.participantId;
   roomCode = result.data.room.code;
@@ -712,8 +984,13 @@ function enterRoom(result) {
     socket: socketClient,
     selfId,
     onRemoteStream: attachRemoteStream,
+    onScreenStats: handleScreenStats,
     onPeerState: (participantId, state) => {
-      if (['closed', 'failed'].includes(state)) removeParticipantMedia(participantId);
+      if (['closed', 'failed'].includes(state)) {
+        screenStatsByParticipant.delete(participantId);
+        renderScreenDiagnostics();
+        removeParticipantMedia(participantId);
+      }
       if (state === 'failed' || state === 'disconnected') {
         elements.reconnect.hidden = false;
         setStatus(state === 'failed'
@@ -733,6 +1010,7 @@ function enterRoom(result) {
       } else showNotice(code);
     }
   });
+  renderVoiceControls();
   peerManager.syncParticipants(currentRoom?.participants || result.data.room.participants).catch((error) => showNotice(error.message));
   startLatencyMonitoring();
 }
@@ -740,6 +1018,7 @@ function enterRoom(result) {
 function renderScreenStream(participantId, stream, { muted = false } = {}) {
   // A viewer can keep only one screen on the stage. A new stream replaces the
   // previous tile, which also covers switching between two active presenters.
+  elements.screenStage.style.removeProperty('--screen-aspect-ratio');
   document.querySelectorAll('[data-screen-tile]').forEach((otherTile) => {
     if (otherTile.dataset.screenTile !== participantId) removeScreenStream(otherTile.dataset.screenTile);
   });
@@ -767,9 +1046,18 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
   video.muted = muted;
   video.srcObject = stream;
   const resumeVideo = () => video.play().catch(() => {});
-  video.onloadedmetadata = resumeVideo;
+  const updateScreenAspect = () => {
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (width > 0 && height > 0) {
+      elements.screenStage.style.setProperty('--screen-aspect-ratio', `${width} / ${height}`);
+    }
+    resumeVideo();
+  };
+  video.onloadedmetadata = updateScreenAspect;
+  video.onresize = updateScreenAspect;
   video.oncanplay = resumeVideo;
-  resumeVideo();
+  updateScreenAspect();
   elements.screenStage.dataset.active = 'true';
   const hasScreenAudio = Boolean(stream.getAudioTracks?.().length);
   if (hasScreenAudio) screenAudioSourceIds.add(participantId);
@@ -802,10 +1090,11 @@ function attachRemoteStream(participantId, track, stream) {
       screenAudioSourceIds.add(participantId);
       elements.screenVolume.disabled = false;
       audio.volume = screenVolumeLevel;
-      audio.muted = screenVolumeLevel === 0;
+      audio.muted = deafened || screenVolumeLevel === 0;
       updateScreenVolume();
     } else {
       audio.volume = getParticipantVolume(participantId);
+      audio.muted = deafened;
       startSpeakingMonitor(participantId, track);
     }
     audio.play().catch(() => {});
@@ -828,6 +1117,8 @@ function selectScreenParticipant(participantId) {
 function updateScreenStageControls() {
   const tiles = [...document.querySelectorAll('[data-screen-tile]')];
   const hasTiles = tiles.length > 0;
+  if (!hasTiles && document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
+  if (!hasTiles) elements.screenStage.style.removeProperty('--screen-aspect-ratio');
   elements.screenStage.dataset.active = String(hasTiles);
   elements.screenEmptyStage.hidden = hasTiles;
   elements.screenFullscreen.disabled = !hasTiles;
@@ -835,6 +1126,10 @@ function updateScreenStageControls() {
   elements.screenAudioStatus.textContent = hasTiles
     ? `${tiles.length} transmissão${tiles.length === 1 ? '' : 'ões'} em exibição${screenAudioSourceIds.size ? ' com áudio' : ''}`
     : 'Áudio da tela: desativado';
+  if (elements.screenDiagnosticsToggle) {
+    elements.screenDiagnosticsToggle.hidden = !hasTiles;
+    if (!hasTiles) setScreenDiagnosticsVisible(false);
+  }
   if (selectedScreenParticipantId && !document.querySelector(`[data-screen-tile="${selectedScreenParticipantId}"]`)) {
     selectedScreenParticipantId = tiles[0]?.dataset.screenTile || null;
   }
@@ -847,39 +1142,28 @@ function removeScreenStream(participantId) {
     if (audio.dataset.participantAudio.startsWith(`${participantId}-`) && audio.dataset.screenAudio === 'true') audio.remove();
   });
   screenAudioSourceIds.delete(participantId);
+  screenStatsByParticipant.delete(participantId);
+  renderScreenDiagnostics();
   updateScreenStageControls();
 }
 
-async function toggleScreenFullscreen(participantId = selectedScreenParticipantId) {
+function setScreenViewExpanded(expanded) {
+  const nextExpanded = Boolean(expanded);
+  document.body.classList.toggle('screen-view-expanded', nextExpanded);
+  elements.screenStage.dataset.expanded = String(nextExpanded);
+  updateFullscreenButton();
+}
+
+function toggleScreenFullscreen(participantId = selectedScreenParticipantId) {
   const tile = document.querySelector(`[data-screen-tile="${participantId}"]`);
   const video = tile?.querySelector('[data-participant-video]');
   if (!video) return;
-  try {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-      return;
-    }
-
-    // Fullscreen the stable stage container instead of the MediaStream video
-    // itself. This keeps the WebRTC element attached to the same layout and
-    // avoids black frames when Chromium/Electron changes fullscreen surfaces.
-    const target = tile || elements.screenStage;
-    if (target.requestFullscreen) {
-      await target.requestFullscreen({ navigationUI: 'hide' });
-    } else if (target.webkitRequestFullscreen) {
-      target.webkitRequestFullscreen();
-    } else if (video.requestFullscreen) {
-      await video.requestFullscreen();
-    } else if (video.webkitEnterFullscreen) {
-      video.webkitEnterFullscreen();
-    }
-  } catch {
-    showNotice('Não foi possível abrir a tela cheia.');
-  }
+  setScreenViewExpanded(!document.body.classList.contains('screen-view-expanded'));
 }
 
 function updateFullscreenButton() {
-  elements.screenFullscreen.textContent = document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia';
+  const expanded = document.body.classList.contains('screen-view-expanded') || Boolean(document.fullscreenElement);
+  if (elements.screenFullscreenLabel) elements.screenFullscreenLabel.textContent = expanded ? 'Sair da tela cheia' : 'Tela cheia';
 }
 
 function updateScreenVolume() {
@@ -888,7 +1172,7 @@ function updateScreenVolume() {
   elements.screenVolumeValue.textContent = `${percentage}%`;
   document.querySelectorAll('audio[data-screen-audio="true"]').forEach((audio) => {
     audio.volume = screenVolumeLevel;
-    audio.muted = screenVolumeLevel === 0;
+    audio.muted = deafened || screenVolumeLevel === 0;
   });
 }
 
@@ -944,14 +1228,24 @@ function removeParticipantMedia(participantId) {
 
 async function initializeAudio() {
   try {
-    peerManager.setMuted(audioSettings.pushToTalk ? true : muted);
-    await peerManager.startAudio(elements.microphoneSelect.value || undefined, audioSettings);
+    peerManager.setMuted(audioSettings.pushToTalk || deafened ? true : muted);
+    try {
+      await peerManager.startAudio(elements.microphoneSelect.value || undefined, audioSettings);
+    } catch (error) {
+      if (error.code !== 'RNNOISE_UNAVAILABLE' || audioSettings.noiseSuppressionMode !== 'rnnoise') throw error;
+      audioSettings = { ...audioSettings, noiseSuppressionMode: 'native' };
+      syncAudioSettingsControls();
+      persistAudioSettings();
+      showNotice('RNNoise não está disponível neste sistema; o modo nativo foi selecionado.', 'warning');
+      await peerManager.startAudio(elements.microphoneSelect.value || undefined, audioSettings);
+    }
     elements.microphone.disabled = false;
-    muted = audioSettings.pushToTalk ? true : Boolean(peerManager.muted);
+    muted = audioSettings.pushToTalk || deafened ? true : Boolean(peerManager.muted);
     peerManager.setMuted(muted);
     if (audioSettings.pushToTalk) await socketClient.setMuted(true);
     startSpeakingMonitor(selfId, peerManager.getAudioTrack());
     elements.microphone.textContent = muted ? 'Ativar microfone' : 'Mutar microfone';
+    renderVoiceControls();
     renderAudioProcessingStatus(peerManager.getAudioProcessingSettings());
     setStatus(audioSettings.pushToTalk ? 'Microfone pronto. Segure a tecla do PTT para falar.' : 'Microfone conectado.', 'success');
   } catch (error) {
@@ -985,8 +1279,12 @@ async function toggleMicrophoneLoopback() {
       ? 'Retorno processado — use fones para evitar microfonia.'
       : 'Retorno direto — use fones para evitar microfonia.';
   } catch (error) {
-    elements.microphoneTestStatus.textContent = 'Não foi possível acessar o microfone.';
-    showNotice('Verifique as permissões do Windows e o dispositivo selecionado.');
+    elements.microphoneTestStatus.textContent = error.code === 'RNNOISE_UNAVAILABLE'
+      ? 'RNNoise não está disponível neste sistema.'
+      : 'Não foi possível acessar o microfone.';
+    showNotice(error.code === 'RNNOISE_UNAVAILABLE'
+      ? 'Escolha o modo nativo ou verifique se o aplicativo foi atualizado.'
+      : 'Verifique as permissões do Windows e o dispositivo selecionado.');
   } finally {
     elements.testMicrophone.disabled = false;
   }
@@ -1033,6 +1331,10 @@ async function createOrJoin(action) {
 }
 
 async function toggleMicrophone() {
+  if (deafened) {
+    showNotice('Desative o ensurdecer para ativar o microfone.', 'warning');
+    return;
+  }
   if (audioSettings.pushToTalk) {
     if (!peerManager.getAudioTrack()) await initializeAudio();
     showNotice(`PTT ativo: segure ${formatPttKey(audioSettings.pushToTalkKey)} para falar.`, 'success');
@@ -1046,16 +1348,45 @@ async function toggleMicrophone() {
   peerManager.setMuted(muted);
   await socketClient.setMuted(muted);
   elements.microphone.textContent = muted ? 'Ativar microfone' : 'Mutar microfone';
-  renderRoom(currentRoom);
+  renderVoiceControls();
+  if (currentRoom) renderRoom(currentRoom);
 }
 
 async function setMicrophoneMuted(nextMuted) {
-  if (!peerManager?.getAudioTrack()) return;
-  muted = Boolean(nextMuted);
-  peerManager.setMuted(muted);
-  await socketClient.setMuted(muted);
+  muted = deafened ? true : Boolean(nextMuted);
+  if (peerManager) {
+    peerManager.setMuted(muted);
+    if (peerManager.getAudioTrack()) await socketClient.setMuted(muted);
+  }
   elements.microphone.textContent = muted ? 'Ativar microfone' : 'Mutar microfone';
-  renderRoom(currentRoom);
+  renderVoiceControls();
+  if (currentRoom) renderRoom(currentRoom);
+}
+
+async function toggleDeafen() {
+  if (deafened) {
+    deafened = false;
+    applyDeafenState();
+    try {
+      await setMicrophoneMuted(mutedBeforeDeafen);
+      showNotice('Você voltou a ouvir a chamada.', 'success');
+    } catch {
+      showNotice('Você voltou a ouvir, mas não foi possível atualizar o estado do microfone.', 'warning');
+    }
+    renderVoiceControls();
+    return;
+  }
+
+  mutedBeforeDeafen = muted;
+  deafened = true;
+  applyDeafenState();
+  try {
+    await setMicrophoneMuted(true);
+    showNotice('Chamada ensurdecida: você não ouvirá ninguém e o microfone foi mutado.', 'success');
+  } catch {
+    showNotice('Chamada ensurdecida, mas não foi possível atualizar o estado do microfone.', 'warning');
+  }
+  renderVoiceControls();
 }
 
 async function toggleScreen() {
@@ -1068,6 +1399,7 @@ async function toggleScreen() {
       return;
     }
     const selection = await chooseScreenSource();
+    setScreenQuality(selection.quality);
     const stream = await peerManager.startScreenShare(selection.sourceId, {
       includeSystemAudio: selection.includeSystemAudio,
       quality: selection.quality
@@ -1121,6 +1453,7 @@ async function chooseScreenSource() {
 async function leaveRoom() {
   try { await socketClient.leaveRoom(); } catch { /* conexão já pode ter caído */ }
   closeAudioSettings();
+  setScreenViewExpanded(false);
   peerManager?.close();
   stopAllSpeakingMonitors();
   stopLatencyMonitoring();
@@ -1132,6 +1465,8 @@ async function leaveRoom() {
   watchingScreenParticipantId = null;
   screenWatchActionInProgress = false;
   screenAudioSourceIds.clear();
+  screenStatsByParticipant.clear();
+  screenQualityWarnings.clear();
   selectedScreenParticipantId = null;
   elements.room.hidden = true;
   elements.landing.hidden = false;
@@ -1142,10 +1477,17 @@ async function leaveRoom() {
   elements.screenVolume.disabled = true;
   elements.screenFullscreen.disabled = true;
   elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
+  if (elements.screenShareLabel) elements.screenShareLabel.textContent = 'Compartilhar tela';
+  setScreenDiagnosticsVisible(false);
+  if (elements.screenDiagnosticsToggle) elements.screenDiagnosticsToggle.hidden = true;
   elements.reconnect.hidden = true;
   elements.reconnect.disabled = false;
   elements.reconnect.textContent = 'Reconectar chamadas';
   muted = false;
+  deafened = false;
+  mutedBeforeDeafen = false;
+  applyDeafenState();
+  renderVoiceControls();
   setStatus('Pronto para criar ou entrar em uma sala.');
 }
 
@@ -1241,6 +1583,8 @@ function bindEvents() {
   elements.profileBadge?.addEventListener('click', () => elements.profilePhotoInput?.click());
   elements.profilePhotoInput?.addEventListener('change', handleProfilePhotoChange);
   elements.microphone.addEventListener('click', toggleMicrophone);
+  elements.voiceMicrophone?.addEventListener('click', toggleMicrophone);
+  elements.voiceDeafen?.addEventListener('click', toggleDeafen);
   elements.microphoneSelect.addEventListener('change', initializeAudio);
   elements.audioSettingsOpen?.addEventListener('click', openAudioSettings);
   elements.audioSettingsClose?.addEventListener('click', closeAudioSettings);
@@ -1253,7 +1597,7 @@ function bindEvents() {
     if (event.target === elements.audioSettingsModal) closeAudioSettings();
   });
   elements.echoCancellation.addEventListener('change', changeAudioProcessing);
-  elements.noiseSuppression.addEventListener('change', changeAudioProcessing);
+  elements.noiseSuppressionMode.addEventListener('change', changeAudioProcessing);
   elements.autoGainControl.addEventListener('change', changeAudioProcessing);
   elements.processMicrophoneTest.addEventListener('change', async () => {
     readAudioSettingsFromControls();
@@ -1276,21 +1620,59 @@ function bindEvents() {
   elements.screen.addEventListener('click', toggleScreen);
   elements.reconnect.addEventListener('click', reconnectCalls);
   elements.screenVolume.addEventListener('input', () => setScreenVolume(elements.screenVolume.value));
-  elements.screenQuality.addEventListener('change', () => setScreenQuality(elements.screenQuality.value));
-  elements.screenFullscreen.addEventListener('click', toggleScreenFullscreen);
+  elements.screenQuality.addEventListener('change', async () => {
+    setScreenQuality(elements.screenQuality.value);
+    try { await peerManager?.setScreenQuality?.(screenQuality); } catch { /* fallback mantém o perfil atual */ }
+  });
+  elements.screenDiagnosticsToggle?.addEventListener('click', () => {
+    const isOpen = elements.screenDiagnostics?.hidden === false;
+    setScreenDiagnosticsVisible(!isOpen);
+    if (!isOpen) renderScreenDiagnostics();
+  });
+  // Não passe o MouseEvent como participantId: a transmissão selecionada
+  // deve ser resolvida pelo estado atual do palco.
+  elements.screenFullscreen.addEventListener('click', () => toggleScreenFullscreen());
   document.addEventListener('fullscreenchange', updateFullscreenButton);
   elements.leave.addEventListener('click', leaveRoom);
+  elements.appUpdateInstall?.addEventListener('click', installApplicationUpdate);
+  elements.appUpdateCheck?.addEventListener('click', async () => {
+    if (appUpdateState.status === 'downloaded') {
+      await installApplicationUpdate();
+      return;
+    }
+    elements.appUpdateCheck.disabled = true;
+    elements.appUpdateSettingsStatus.textContent = 'Verificando atualizações…';
+    try {
+      const state = await window.voiceRoom?.checkForUpdates?.();
+      if (state) handleAppUpdateState(state);
+    } catch {
+      showNotice('Não foi possível verificar atualizações agora.', 'warning');
+      renderAppUpdateSettings();
+    }
+  });
+  elements.appUpdateDismiss?.addEventListener('click', () => {
+    appUpdateDismissed = true;
+    renderAppUpdate();
+  });
   elements.name.addEventListener('input', () => {
     try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, elements.name.value); } catch { /* armazenamento opcional */ }
     renderProfileAvatar();
   });
   document.addEventListener('keydown', handlePttKeyDown);
   document.addEventListener('keydown', (event) => {
-    if (event.code === 'Escape' && !capturingPttKey) closeAudioSettings();
+    if (event.code !== 'Escape' || capturingPttKey) return;
+    if (document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
+    else closeAudioSettings();
   });
   document.addEventListener('keyup', handlePttKeyUp);
   window.addEventListener('blur', releasePtt);
   window.voiceRoom?.onDeepLink?.(handleDeepLink);
+  window.voiceRoom?.onUpdateState?.(handleAppUpdateState);
+  window.voiceRoom?.getUpdateState?.().then(handleAppUpdateState).catch(() => {});
+  window.voiceRoom?.getAppVersion?.().then((version) => {
+    appVersion = typeof version === 'string' ? version : '';
+    renderAppUpdateSettings();
+  }).catch(() => {});
 }
 
 function handleSocketEvent(event, payload) {

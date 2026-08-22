@@ -1,20 +1,22 @@
-# ADR-004 — Um compartilhamento de tela por sala
+# ADR-004 — Limite de compartilhamento de tela no MVP
 
-- Status: aceito
+- Status: substituído parcialmente por `ADR-005-qualidade-adaptativa-p2p.md`
 - Data: 21/08/2026
 
 ## Decisão
 
-O servidor concede um lock atômico a apenas um participante. O cliente captura uma janela/monitor selecionado, transmite vídeo em até 720p/30 FPS e libera a track ao parar ou ao receber `track.onended`.
+O servidor mantém um lock atômico por participante e limita a sala a duas pessoas transmitindo simultaneamente. O cliente captura uma janela/monitor selecionado, preserva a proporção nativa e libera a track ao parar ou ao receber `track.onended`.
+
+Cada espectador continua inscrito em apenas uma transmissão por vez. A mídia segue em WebRTC P2P: o apresentador possui um sender de tela separado para cada espectador inscrito.
 
 ## Motivo
 
-Um único vídeo reduz upload, CPU e complexidade de negociação no Mesh.
+O limite de duas transmissões atende ao uso em pequenos grupos sem transformar o Mesh em um sistema de múltiplas fontes irrestritas. A inscrição opcional evita que todos os participantes recebam vídeo quando não desejarem assistir.
 
 ## Consequências
 
-- Uma segunda tentativa recebe `SCREEN_BUSY`.
+- Uma terceira tentativa recebe `SCREEN_BUSY`.
 - O lock é liberado em stop, saída, desconexão e expiração.
-- Áudio do sistema fica fora do MVP.
-- A mudança para múltiplos compartilhamentos exigirá novo desenho de mídia e testes.
-
+- O espectador pode trocar de fonte; a inscrição anterior é removida antes de permanecer na nova.
+- Áudio do sistema é opcional e vem do loopback do Windows; pode incluir outros aplicativos e exige cuidado com eco.
+- Aumentar o número de transmissores ou permitir múltiplas telas simultâneas por espectador exige novo desenho de mídia e testes.

@@ -1,16 +1,35 @@
 const { ICE_SERVERS } = require('./config');
+const {
+  ScreenQualityController,
+  calculateScreenScale,
+  getScreenProfile,
+  normalizeScreenProfile,
+  normalizeFraction,
+  orderScreenCodecs
+} = require('./screen-quality');
 
 const DEFAULT_AUDIO_SETTINGS = Object.freeze({
   echoCancellation: true,
+  noiseSuppressionMode: 'native',
   noiseSuppression: true,
   autoGainControl: true,
   inputGain: 1
 });
 
-const SCREEN_QUALITIES = Object.freeze({
-  '480p': Object.freeze({ width: 854, height: 480, frameRate: 30 }),
-  '720p': Object.freeze({ width: 1280, height: 720, frameRate: 30 })
-});
+const NOISE_SUPPRESSION_MODES = Object.freeze(['native', 'rnnoise', 'off']);
+const RNNOISE_SAMPLE_RATE = 48000;
+
+function getNoiseSuppressionMode(settings = {}) {
+  if (NOISE_SUPPRESSION_MODES.includes(settings.noiseSuppressionMode)) {
+    return settings.noiseSuppressionMode;
+  }
+  if (settings.noiseSuppression === false) return 'off';
+  return 'native';
+}
+
+function shouldUseNativeNoiseSuppression(settings = {}) {
+  return getNoiseSuppressionMode(settings) === 'native';
+}
 
 function clampInputGain(value) {
   const numericValue = Number(value);
@@ -22,12 +41,16 @@ function getAudioConstraints(deviceId, {
   processed = true,
   echoCancellation = DEFAULT_AUDIO_SETTINGS.echoCancellation,
   noiseSuppression = DEFAULT_AUDIO_SETTINGS.noiseSuppression,
+  noiseSuppressionMode,
   autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl
 } = {}) {
+  const nativeNoiseSuppression = noiseSuppressionMode !== undefined
+    ? shouldUseNativeNoiseSuppression({ noiseSuppressionMode })
+    : Boolean(noiseSuppression);
   const audio = processed
     ? {
       echoCancellation: Boolean(echoCancellation),
-      noiseSuppression: Boolean(noiseSuppression),
+      noiseSuppression: nativeNoiseSuppression,
       autoGainControl: Boolean(autoGainControl)
     }
     : {
@@ -42,11 +65,15 @@ function getAudioConstraints(deviceId, {
 function getAudioProcessingConstraints({
   echoCancellation = DEFAULT_AUDIO_SETTINGS.echoCancellation,
   noiseSuppression = DEFAULT_AUDIO_SETTINGS.noiseSuppression,
+  noiseSuppressionMode,
   autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl
 } = {}) {
+  const nativeNoiseSuppression = noiseSuppressionMode !== undefined
+    ? shouldUseNativeNoiseSuppression({ noiseSuppressionMode })
+    : Boolean(noiseSuppression);
   return {
     echoCancellation: Boolean(echoCancellation),
-    noiseSuppression: Boolean(noiseSuppression),
+    noiseSuppression: nativeNoiseSuppression,
     autoGainControl: Boolean(autoGainControl)
   };
 }
@@ -84,10 +111,13 @@ async function applyAudioProcessingConstraints(track, settings) {
   return { settings: actualSettings, unsupported: [...new Set([...unsupported, ...mismatches])] };
 }
 
-function createAudioContext() {
+function createAudioContext({ sampleRate } = {}) {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return null;
-  return new AudioContextClass({ latencyHint: 'interactive' });
+  return new AudioContextClass({
+    latencyHint: 'interactive',
+    ...(sampleRate ? { sampleRate } : {})
+  });
 }
 
 function stopStream(stream) {
@@ -103,20 +133,132 @@ async function closeAudioContext(audioContext) {
   }
 }
 
+function createRnnoiseUnavailableError(message = 'RNNoise não está disponível neste sistema.') {
+  const error = new Error(message);
+  error.code = 'RNNOISE_UNAVAILABLE';
+  return error;
+}
+
+async function createRnnoiseNode(audioContext) {
+  const AudioWorkletNodeClass = window.AudioWorkletNode;
+  if (!audioContext?.audioWorklet || !AudioWorkletNodeClass) {
+    throw createRnnoiseUnavailableError('O processamento RNNoise não é compatível com esta versão do aplicativo.');
+  }
+  if (audioContext.sampleRate !== RNNOISE_SAMPLE_RATE) {
+    throw createRnnoiseUnavailableError('O RNNoise precisa de um contexto de áudio em 48 kHz.');
+  }
+  try {
+    const workletUrl = new URL('./rnnoise-worklet.bundle.js', document.baseURI).toString();
+    await audioContext.audioWorklet.addModule(workletUrl);
+    const node = new AudioWorkletNodeClass(audioContext, 'rnnoise-processor', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1]
+    });
+    await new Promise((resolve, reject) => {
+      let timeout;
+      const finish = (callback) => (value) => {
+        window.clearTimeout(timeout);
+        node.port.onmessage = null;
+        node.onprocessorerror = null;
+        callback(value);
+      };
+      timeout = window.setTimeout(
+        () => finish(reject)(createRnnoiseUnavailableError('O RNNoise demorou demais para iniciar.')),
+        8000
+      );
+      node.port.onmessage = (event) => {
+        if (event.data?.type === 'ready') finish(resolve)(event.data);
+        if (event.data?.type === 'error') finish(reject)(createRnnoiseUnavailableError(event.data.message));
+      };
+      node.onprocessorerror = () => finish(reject)(createRnnoiseUnavailableError('O processador RNNoise falhou ao iniciar.'));
+    });
+    return node;
+  } catch (error) {
+    if (error?.code === 'RNNOISE_UNAVAILABLE') throw error;
+    throw createRnnoiseUnavailableError(error?.message || 'Não foi possível carregar o RNNoise.');
+  }
+}
+
+async function createAudioPipeline(captureStream, audioSettings) {
+  const noiseSuppressionMode = getNoiseSuppressionMode(audioSettings);
+  const pipeline = {
+    stream: captureStream,
+    audioContext: null,
+    audioGainNode: null,
+    rnnoiseNode: null,
+    noiseSuppressionMode
+  };
+  const sampleRate = noiseSuppressionMode === 'rnnoise' ? RNNOISE_SAMPLE_RATE : undefined;
+  const audioContext = createAudioContext({ sampleRate });
+  if (!audioContext) {
+    if (noiseSuppressionMode === 'rnnoise') {
+      throw createRnnoiseUnavailableError('O processamento RNNoise não é compatível com este sistema.');
+    }
+    return pipeline;
+  }
+  try {
+    await audioContext.resume();
+    const source = audioContext.createMediaStreamSource(captureStream);
+    const gainNode = audioContext.createGain();
+    gainNode.gain.value = clampInputGain(audioSettings.inputGain);
+    const destination = audioContext.createMediaStreamDestination();
+    let output = source;
+    let rnnoiseNode = null;
+    if (noiseSuppressionMode === 'rnnoise') {
+      rnnoiseNode = await createRnnoiseNode(audioContext);
+      output = output.connect(rnnoiseNode);
+    }
+    output.connect(gainNode).connect(destination);
+    pipeline.stream = destination.stream;
+    pipeline.audioContext = audioContext;
+    pipeline.audioGainNode = gainNode;
+    pipeline.rnnoiseNode = rnnoiseNode;
+    return pipeline;
+  } catch (error) {
+    await closeAudioContext(audioContext);
+    if (noiseSuppressionMode === 'rnnoise') {
+      if (error?.code === 'RNNOISE_UNAVAILABLE') throw error;
+      throw createRnnoiseUnavailableError(error?.message || 'Não foi possível iniciar o RNNoise.');
+    }
+    return pipeline;
+  }
+}
+
+function closeRnnoiseNode(rnnoiseNode) {
+  if (!rnnoiseNode) return;
+  try { rnnoiseNode.port.postMessage({ type: 'close' }); } catch { /* contexto já encerrado */ }
+  try { rnnoiseNode.disconnect(); } catch { /* nó já desconectado */ }
+}
+
 class PeerManager {
-  constructor({ socket, selfId, onRemoteStream = () => {}, onPeerState = () => {}, onError = () => {} }) {
+  constructor({
+    socket,
+    selfId,
+    onRemoteStream = () => {},
+    onPeerState = () => {},
+    onError = () => {},
+    onScreenStats = () => {}
+  }) {
     this.socket = socket;
     this.selfId = selfId;
     this.onRemoteStream = onRemoteStream;
     this.onPeerState = onPeerState;
     this.onError = onError;
+    this.onScreenStats = onScreenStats;
     this.peers = new Map();
     this.audioStream = null;
     this.audioCaptureStream = null;
     this.audioContext = null;
     this.audioGainNode = null;
+    this.rnnoiseNode = null;
+    this.noiseSuppressionMode = 'native';
     this.screenStream = null;
+    this.screenQuality = 'balanced';
     this.screenViewers = new Set();
+    this.screenQualityControllers = new Map();
+    this.screenStatsTimer = null;
+    this.screenStatsInFlight = false;
     this.microphoneLoopback = null;
     this.muted = false;
   }
@@ -143,45 +285,38 @@ class PeerManager {
       // Alguns drivers aceitam a captura, mas não permitem reaplicar as constraints.
       // O estado efetivo será exposto por getAudioProcessingSettings().
     }
-    let nextStream = captureStream;
-    let nextAudioContext = null;
-    let nextGainNode = null;
-
+    let pipeline;
     try {
-      nextAudioContext = createAudioContext();
-      if (nextAudioContext) {
-        await nextAudioContext.resume();
-        const source = nextAudioContext.createMediaStreamSource(captureStream);
-        nextGainNode = nextAudioContext.createGain();
-        nextGainNode.gain.value = audioSettings.inputGain;
-        const destination = nextAudioContext.createMediaStreamDestination();
-        source.connect(nextGainNode).connect(destination);
-        nextStream = destination.stream;
-      }
-    } catch {
-      await closeAudioContext(nextAudioContext);
-      nextAudioContext = null;
-      nextGainNode = null;
-      nextStream = captureStream;
+      pipeline = await createAudioPipeline(captureStream, audioSettings);
+    } catch (error) {
+      stopStream(captureStream);
+      throw error;
     }
 
     const oldStream = this.audioStream;
     const oldCaptureStream = this.audioCaptureStream;
     const oldAudioContext = this.audioContext;
     const oldGainNode = this.audioGainNode;
-    this.audioStream = nextStream;
+    const oldRnnoiseNode = this.rnnoiseNode;
+    const oldNoiseSuppressionMode = this.noiseSuppressionMode;
+    this.audioStream = pipeline.stream;
     this.audioCaptureStream = captureStream;
-    this.audioContext = nextAudioContext;
-    this.audioGainNode = nextGainNode;
-    const nextTrack = nextStream.getAudioTracks()[0];
+    this.audioContext = pipeline.audioContext;
+    this.audioGainNode = pipeline.audioGainNode;
+    this.rnnoiseNode = pipeline.rnnoiseNode;
+    this.noiseSuppressionMode = pipeline.noiseSuppressionMode;
+    const nextTrack = pipeline.stream.getAudioTracks()[0];
     if (!nextTrack) {
-      stopStream(nextStream);
-      if (captureStream !== nextStream) stopStream(captureStream);
-      await closeAudioContext(nextAudioContext);
+      closeRnnoiseNode(pipeline.rnnoiseNode);
+      stopStream(pipeline.stream);
+      if (captureStream !== pipeline.stream) stopStream(captureStream);
+      await closeAudioContext(pipeline.audioContext);
       this.audioStream = oldStream;
       this.audioCaptureStream = oldCaptureStream;
       this.audioContext = oldAudioContext;
       this.audioGainNode = oldGainNode;
+      this.rnnoiseNode = oldRnnoiseNode;
+      this.noiseSuppressionMode = oldNoiseSuppressionMode;
       throw new Error('O dispositivo não forneceu uma faixa de áudio.');
     }
     try {
@@ -190,21 +325,12 @@ class PeerManager {
       // contentHint pode não existir em versões antigas do Chromium.
     }
     nextTrack.enabled = !this.muted;
-
-    for (const peer of this.peers.values()) {
-      const sender = peer.audioSender || peer.connection.getSenders().find((item) => item.track?.kind === 'audio' && !peer.screenSenders?.includes(item));
-      if (sender) {
-        await sender.replaceTrack(nextTrack);
-        peer.audioSender = sender;
-      } else {
-        peer.audioSender = peer.connection.addTrack(nextTrack, nextStream);
-        await this.#renegotiate(peer);
-      }
-    }
+    await this.#replaceAudioTrack(pipeline.stream);
     stopStream(oldStream);
     if (oldCaptureStream && oldCaptureStream !== oldStream) stopStream(oldCaptureStream);
+    closeRnnoiseNode(oldRnnoiseNode);
     await closeAudioContext(oldAudioContext);
-    return nextStream;
+    return pipeline.stream;
   }
 
   getAudioTrack() {
@@ -216,10 +342,39 @@ class PeerManager {
     return track?.getSettings?.() || {};
   }
 
+  getNoiseSuppressionMode() {
+    return this.noiseSuppressionMode;
+  }
+
   async setAudioProcessing(settings = {}) {
     const track = this.audioCaptureStream?.getAudioTracks()[0];
     if (!track) return { settings: {}, unsupported: [] };
-    return applyAudioProcessingConstraints(track, settings);
+    const nextMode = getNoiseSuppressionMode(settings);
+    const result = await applyAudioProcessingConstraints(track, settings);
+    if (nextMode === this.noiseSuppressionMode) return result;
+    const pipeline = await createAudioPipeline(this.audioCaptureStream, settings);
+    const nextTrack = pipeline.stream.getAudioTracks()[0];
+    if (!nextTrack) {
+      closeRnnoiseNode(pipeline.rnnoiseNode);
+      stopStream(pipeline.stream);
+      await closeAudioContext(pipeline.audioContext);
+      throw new Error('O dispositivo não forneceu uma faixa de áudio.');
+    }
+    nextTrack.contentHint = 'speech';
+    nextTrack.enabled = !this.muted;
+    await this.#replaceAudioTrack(pipeline.stream);
+    const oldStream = this.audioStream;
+    const oldContext = this.audioContext;
+    const oldRnnoiseNode = this.rnnoiseNode;
+    this.audioStream = pipeline.stream;
+    this.audioContext = pipeline.audioContext;
+    this.audioGainNode = pipeline.audioGainNode;
+    this.rnnoiseNode = pipeline.rnnoiseNode;
+    this.noiseSuppressionMode = pipeline.noiseSuppressionMode;
+    stopStream(oldStream);
+    closeRnnoiseNode(oldRnnoiseNode);
+    await closeAudioContext(oldContext);
+    return result;
   }
 
   async startMicrophoneLoopback(deviceId, onLevel = () => {}, inputGain = 1, processingSettings = {}) {
@@ -244,7 +399,10 @@ class PeerManager {
         // O retorno continua disponível mesmo quando o driver ignora uma opção.
       }
     }
-    const audioContext = createAudioContext();
+    const noiseSuppressionMode = processed ? getNoiseSuppressionMode(processingSettings) : 'off';
+    const audioContext = createAudioContext({
+      sampleRate: noiseSuppressionMode === 'rnnoise' ? RNNOISE_SAMPLE_RATE : undefined
+    });
     if (!audioContext) {
       stopStream(stream);
       throw new Error('O retorno de áudio não está disponível neste sistema.');
@@ -252,6 +410,7 @@ class PeerManager {
     let analyser;
     let source;
     let gainNode;
+    let rnnoiseNode = null;
     let samples;
     try {
       await audioContext.resume();
@@ -261,14 +420,29 @@ class PeerManager {
       gainNode = audioContext.createGain();
       gainNode.gain.value = clampInputGain(inputGain);
       samples = new Uint8Array(analyser.fftSize);
-      source.connect(gainNode).connect(analyser);
+      let output = source;
+      if (noiseSuppressionMode === 'rnnoise') {
+        rnnoiseNode = await createRnnoiseNode(audioContext);
+        output = output.connect(rnnoiseNode);
+      }
+      output.connect(gainNode).connect(analyser);
       analyser.connect(audioContext.destination);
     } catch (error) {
       stopStream(stream);
+      closeRnnoiseNode(rnnoiseNode);
       await closeAudioContext(audioContext);
       throw error;
     }
-    const loopback = { stream, audioContext, analyser, source, gainNode, animationFrame: null, active: true };
+    const loopback = {
+      stream,
+      audioContext,
+      analyser,
+      source,
+      gainNode,
+      rnnoiseNode,
+      animationFrame: null,
+      active: true
+    };
     this.microphoneLoopback = loopback;
     const updateLevel = () => {
       if (!loopback.active) return;
@@ -291,6 +465,7 @@ class PeerManager {
     loopback.active = false;
     if (loopback.animationFrame) cancelAnimationFrame(loopback.animationFrame);
     loopback.source.disconnect();
+    closeRnnoiseNode(loopback.rnnoiseNode);
     loopback.gainNode.disconnect();
     loopback.analyser.disconnect();
     stopStream(loopback.stream);
@@ -413,19 +588,22 @@ class PeerManager {
     await peer.connection.addIceCandidate(candidate);
   }
 
-  async startScreenShare(sourceId, { includeSystemAudio = false, quality = '720p' } = {}) {
+  async startScreenShare(sourceId, { includeSystemAudio = false, quality = 'balanced' } = {}) {
     const lock = await this.socket.startScreenShare();
     if (!lock?.ok) throw new Error(lock?.message || 'Não foi possível iniciar o compartilhamento.');
     try {
       if (sourceId && window.voiceRoom?.selectScreenSource) {
         await window.voiceRoom.selectScreenSource(sourceId);
       }
-      const selectedQuality = SCREEN_QUALITIES[quality] || SCREEN_QUALITIES['720p'];
+      this.screenQuality = normalizeScreenProfile(quality);
+      const selectedQuality = getScreenProfile(this.screenQuality);
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
-          width: { max: selectedQuality.width },
-          height: { max: selectedQuality.height },
-          frameRate: { max: selectedQuality.frameRate }
+          // Capture the selected surface in its native aspect ratio. Scaling
+          // is applied per RTP sender below, so a 16:10 or ultrawide window
+          // is never cropped to fit a 16:9 box.
+          frameRate: { ideal: selectedQuality.frameRate, max: selectedQuality.frameRate },
+          resizeMode: 'none'
         },
         // Electron's loopback audio is the whole Windows output. Keep it off
         // unless the user explicitly opts in from the source picker.
@@ -435,7 +613,11 @@ class PeerManager {
       });
       const track = stream.getVideoTracks()[0];
       if (!track) throw new Error('A captura não forneceu vídeo.');
-      track.contentHint = 'detail';
+      try {
+        track.contentHint = selectedQuality.contentHint;
+      } catch {
+        // contentHint pode não existir em versões antigas do Chromium.
+      }
       for (const audioTrack of stream.getAudioTracks()) {
         try {
           audioTrack.contentHint = 'music';
@@ -457,6 +639,8 @@ class PeerManager {
     if (!this.screenStream) return;
     this.screenStream.getTracks().forEach((track) => track.stop());
     this.screenViewers.clear();
+    this.screenQualityControllers.clear();
+    this.#stopScreenStatsLoop();
     for (const peer of this.peers.values()) {
       if (peer.screenSenders?.length) {
         for (const sender of peer.screenSenders) peer.connection.removeTrack(sender);
@@ -470,8 +654,17 @@ class PeerManager {
 
   async setScreenViewer(participantId, shouldWatch) {
     if (!participantId || participantId === this.selfId) return;
-    if (shouldWatch) this.screenViewers.add(participantId);
-    else this.screenViewers.delete(participantId);
+    if (shouldWatch) {
+      this.screenViewers.add(participantId);
+      if (!this.screenQualityControllers.has(participantId)) {
+        this.screenQualityControllers.set(participantId, new ScreenQualityController({
+          desiredProfile: this.screenQuality
+        }));
+      }
+    } else {
+      this.screenViewers.delete(participantId);
+      this.screenQualityControllers.delete(participantId);
+    }
 
     const peerAlreadyExisted = this.peers.has(participantId);
     const peer = this.peers.get(participantId) || (shouldWatch ? this.#createPeer({ participantId }) : null);
@@ -487,6 +680,7 @@ class PeerManager {
       // #createPeer can attach the tracks while constructing a new peer. It
       // still needs an offer so the viewer actually receives those tracks.
       if (!peerAlreadyExisted || screenTracksAdded) await this.#renegotiate(peer);
+      this.#startScreenStatsLoop();
       return;
     }
 
@@ -494,6 +688,204 @@ class PeerManager {
     for (const sender of peer.screenSenders) peer.connection.removeTrack(sender);
     peer.screenSenders = [];
     await this.#renegotiate(peer);
+    if (!this.screenViewers.size) this.#stopScreenStatsLoop();
+  }
+
+  async #configureScreenSenders(senders = [], participantId) {
+    const controller = participantId ? this.screenQualityControllers.get(participantId) : null;
+    const quality = getScreenProfile(controller?.effectiveProfile || this.screenQuality);
+    const peer = participantId ? this.peers.get(participantId) : null;
+    const safeBitrate = Number.isFinite(peer?.screenSafeBitrate)
+      ? Math.min(quality.maxBitrate, peer.screenSafeBitrate)
+      : quality.maxBitrate;
+    for (const sender of senders) {
+      if (sender?.track?.kind !== 'video' || typeof sender.getParameters !== 'function') continue;
+      try {
+        const settings = sender.track.getSettings?.() || {};
+        const width = Number(settings.width);
+        const height = Number(settings.height);
+        const scale = calculateScreenScale(width, height, quality.id);
+        const parameters = sender.getParameters();
+        if (!Array.isArray(parameters.encodings) || !parameters.encodings.length) continue;
+        for (const encoding of parameters.encodings) {
+          encoding.scaleResolutionDownBy = scale;
+          encoding.maxBitrate = safeBitrate;
+          encoding.maxFramerate = quality.frameRate;
+        }
+        parameters.degradationPreference = quality.degradationPreference;
+        await sender.setParameters(parameters);
+      } catch (error) {
+        this.onScreenStats(participantId, {
+          type: 'screen-quality-warning',
+          participantId,
+          code: 'SCREEN_PARAMETERS_UNSUPPORTED',
+          message: error?.message || 'O runtime não aceitou todos os parâmetros de qualidade.'
+        });
+      }
+    }
+  }
+
+  async setScreenQuality(value) {
+    this.screenQuality = normalizeScreenProfile(value);
+    const selectedProfile = getScreenProfile(this.screenQuality);
+    const track = this.screenStream?.getVideoTracks?.()[0];
+    if (track) {
+      try { track.contentHint = selectedProfile.contentHint; } catch { /* recurso opcional */ }
+      const currentFrameRate = Number(track.getSettings?.().frameRate);
+      const knownFrameRate = Number.isFinite(currentFrameRate) ? currentFrameRate : 0;
+      if (selectedProfile.frameRate > knownFrameRate && typeof track.applyConstraints === 'function') {
+        try {
+          await track.applyConstraints({
+            frameRate: { ideal: selectedProfile.frameRate, max: selectedProfile.frameRate }
+          });
+        } catch {
+          // Se o runtime não elevar o FPS, a captura segue no limite atual.
+        }
+      }
+    }
+    for (const controller of this.screenQualityControllers.values()) controller.setDesiredProfile(this.screenQuality);
+    for (const peer of this.peers.values()) {
+      if (!peer.screenSenders?.length) continue;
+      await this.#configureScreenSenders(peer.screenSenders, peer.participantId);
+    }
+    return this.screenQuality;
+  }
+
+  getScreenQuality() {
+    return this.screenQuality;
+  }
+
+  #startScreenStatsLoop() {
+    if (this.screenStatsTimer || !this.screenViewers.size) return;
+    this.screenStatsTimer = setInterval(() => {
+      this.#pollScreenStats().catch(() => {});
+    }, 2000);
+    this.#pollScreenStats().catch(() => {});
+  }
+
+  #stopScreenStatsLoop() {
+    if (this.screenStatsTimer) clearInterval(this.screenStatsTimer);
+    this.screenStatsTimer = null;
+    this.screenStatsInFlight = false;
+    for (const peer of this.peers.values()) {
+      peer.screenStatsPrevious = null;
+      peer.screenSafeBitrate = null;
+    }
+  }
+
+  async #pollScreenStats() {
+    if (this.screenStatsInFlight || !this.screenStream || !this.screenViewers.size) return;
+    this.screenStatsInFlight = true;
+    try {
+      for (const participantId of this.screenViewers) {
+        const peer = this.peers.get(participantId);
+        const controller = this.screenQualityControllers.get(participantId);
+        if (!peer?.screenSenders?.length || !controller) continue;
+        const previousSafeBitrate = peer.screenSafeBitrate;
+        const metrics = await this.#readScreenStats(peer, controller);
+        if (!metrics) continue;
+        const decision = controller.update(metrics);
+        this.onScreenStats(participantId, { ...metrics, ...decision });
+        const safeBitrateChanged = Number.isFinite(metrics.safeBitrate)
+          && (!Number.isFinite(previousSafeBitrate)
+            || Math.abs(metrics.safeBitrate - previousSafeBitrate) / Math.max(1, previousSafeBitrate) >= 0.2);
+        if (decision.changed || safeBitrateChanged) {
+          await this.#configureScreenSenders(peer.screenSenders, participantId);
+          this.onScreenStats(participantId, {
+            ...metrics,
+            ...decision,
+            appliedProfile: decision.effectiveProfile
+          });
+        }
+      }
+    } finally {
+      this.screenStatsInFlight = false;
+    }
+  }
+
+  async #readScreenStats(peer, controller) {
+    if (typeof peer.connection.getStats !== 'function') return null;
+    try {
+      const report = await peer.connection.getStats();
+      const stats = [...report.values()];
+      const outbound = stats.find((stat) => stat.type === 'outbound-rtp'
+        && (stat.kind === 'video' || stat.mediaType === 'video'));
+      if (!outbound) return null;
+      const remoteInbound = stats.find((stat) => stat.type === 'remote-inbound-rtp'
+        && stat.localId === outbound.id);
+      const selectedPair = stats.find((stat) => stat.type === 'candidate-pair'
+        && stat.state === 'succeeded'
+        && stat.nominated !== false
+        && (stat.selected === true || stat.nominated === true));
+      const codec = stats.find((stat) => stat.type === 'codec' && stat.id === outbound.codecId);
+      const timestamp = Number(outbound.timestamp) || Date.now();
+      const previous = peer.screenStatsPrevious;
+      const elapsedMs = previous ? timestamp - previous.timestamp : 0;
+      const bitrate = previous && elapsedMs > 0 && Number.isFinite(Number(outbound.bytesSent))
+        ? Math.max(0, (Number(outbound.bytesSent) - previous.bytesSent) * 8 * 1000 / elapsedMs)
+        : null;
+      peer.screenStatsPrevious = {
+        timestamp,
+        bytesSent: Number(outbound.bytesSent) || 0
+      };
+      const finiteStat = (value) => {
+        if (value === null || value === undefined || value === '') return null;
+        const numericValue = Number(value);
+        return Number.isFinite(numericValue) ? numericValue : null;
+      };
+      const effectiveProfile = getScreenProfile(controller.effectiveProfile);
+      const rttSeconds = Number(remoteInbound?.roundTripTime ?? selectedPair?.currentRoundTripTime);
+      const availableOutgoingBitrate = Number.isFinite(Number(selectedPair?.availableOutgoingBitrate))
+        ? Number(selectedPair.availableOutgoingBitrate)
+        : null;
+      const safeBitrate = availableOutgoingBitrate !== null
+        ? Math.max(300_000, Math.floor(availableOutgoingBitrate * 0.8))
+        : null;
+      if (safeBitrate !== null) peer.screenSafeBitrate = safeBitrate;
+      return {
+        type: 'screen-quality',
+        timestamp,
+        desiredProfile: controller.desiredProfile,
+        effectiveProfile: controller.effectiveProfile,
+        width: finiteStat(outbound.frameWidth),
+        height: finiteStat(outbound.frameHeight),
+        framesPerSecond: finiteStat(outbound.framesPerSecond),
+        targetFrameRate: effectiveProfile.frameRate,
+        maxBitrate: effectiveProfile.maxBitrate,
+        bitrate,
+        rttMs: Number.isFinite(rttSeconds) ? rttSeconds * 1000 : null,
+        lossFraction: normalizeFraction(remoteInbound?.fractionLost),
+        qualityLimitationReason: outbound.qualityLimitationReason || 'none',
+        availableOutgoingBitrate,
+        safeBitrate,
+        nackCount: finiteStat(remoteInbound?.nackCount),
+        pliCount: finiteStat(remoteInbound?.pliCount),
+        codec: codec?.mimeType || null,
+        encoderImplementation: outbound.encoderImplementation || null
+      };
+    } catch {
+      // A peer can be replaced while the report is being read.
+      return null;
+    }
+  }
+
+  async #configureScreenCodec(peer) {
+    if (!peer?.screenSenders?.length || typeof peer.connection.getTransceivers !== 'function') return;
+    const sender = peer.screenSenders.find((item) => item?.track?.kind === 'video');
+    const transceiver = peer.connection.getTransceivers().find((item) => item.sender === sender);
+    const senderCapabilities = globalThis.RTCRtpSender?.getCapabilities?.('video');
+    if (!transceiver || typeof transceiver.setCodecPreferences !== 'function' || !senderCapabilities?.codecs?.length) return;
+    try {
+      const orderedCodecs = orderScreenCodecs(senderCapabilities.codecs);
+      if (orderedCodecs.length) await transceiver.setCodecPreferences(orderedCodecs);
+    } catch (error) {
+      this.onScreenStats(peer.participantId, {
+        type: 'screen-quality-warning',
+        participantId: peer.participantId,
+        code: 'SCREEN_CODEC_PREFERENCE_UNSUPPORTED',
+        message: error?.message || 'A preferência de codec não pôde ser aplicada.'
+      });
+    }
   }
 
   close() {
@@ -504,12 +896,17 @@ class PeerManager {
     this.audioCaptureStream = null;
     this.audioContext = null;
     this.audioGainNode = null;
+    closeRnnoiseNode(this.rnnoiseNode);
+    this.rnnoiseNode = null;
+    this.noiseSuppressionMode = 'native';
     stopStream(audioStream);
     if (audioCaptureStream && audioCaptureStream !== audioStream) stopStream(audioCaptureStream);
     closeAudioContext(audioContext).catch(() => {});
     stopStream(this.screenStream);
     this.screenStream = null;
     this.screenViewers.clear();
+    this.screenQualityControllers.clear();
+    this.#stopScreenStatsLoop();
     this.stopMicrophoneLoopback().catch(() => {});
     for (const participantId of this.peers.keys()) this.removePeer(participantId);
   }
@@ -522,8 +919,29 @@ class PeerManager {
     peer.connection.oniceconnectionstatechange = null;
     peer.connection.onicecandidate = null;
     peer.connection.close();
+    this.screenViewers.delete(participantId);
+    this.screenQualityControllers.delete(participantId);
+    peer.screenStatsPrevious = null;
     this.peers.delete(participantId);
+    if (!this.screenViewers.size) this.#stopScreenStatsLoop();
     this.onPeerState(participantId, 'closed');
+  }
+
+  async #replaceAudioTrack(stream) {
+    const nextTrack = stream?.getAudioTracks?.()[0];
+    if (!nextTrack) throw new Error('O dispositivo não forneceu uma faixa de áudio.');
+    for (const peer of this.peers.values()) {
+      const sender = peer.audioSender || peer.connection.getSenders().find(
+        (item) => item.track?.kind === 'audio' && !peer.screenSenders?.includes(item)
+      );
+      if (sender) {
+        await sender.replaceTrack(nextTrack);
+        peer.audioSender = sender;
+      } else {
+        peer.audioSender = peer.connection.addTrack(nextTrack, stream);
+        await this.#renegotiate(peer);
+      }
+    }
   }
 
   #createPeer(participant) {
@@ -540,7 +958,9 @@ class PeerManager {
       makingOffer: false,
       ignoreOffer: false,
       needsNegotiation: false,
-      iceRestartAttempts: 0
+      iceRestartAttempts: 0,
+      screenStatsPrevious: null,
+      screenSafeBitrate: null
     };
     this.peers.set(participant.participantId, peer);
     if (this.audioStream) {
@@ -594,6 +1014,8 @@ class PeerManager {
       peer.needsNegotiation = false;
       peer.makingOffer = true;
       try {
+        await this.#configureScreenSenders(peer.screenSenders, peer.participantId);
+        await this.#configureScreenCodec(peer);
         const offer = await peer.connection.createOffer(iceRestart ? { iceRestart: true } : undefined);
         if (peer.connection.signalingState !== 'stable') {
           peer.needsNegotiation = true;

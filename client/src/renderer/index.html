@@ -2,7 +2,7 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000 https://voiceroom-signaling.onrender.com wss://voiceroom-signaling.onrender.com; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000 https://voiceroom-signaling.onrender.com wss://voiceroom-signaling.onrender.com; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none';" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VoiceRoom</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -28,6 +28,17 @@
       </header>
 
       <div id="notice" class="notice" role="alert" hidden></div>
+
+      <section id="app-update" class="app-update" hidden role="status" aria-live="polite">
+        <div class="app-update-copy">
+          <strong id="app-update-title">Atualização do VoiceRoom</strong>
+          <span id="app-update-message"></span>
+        </div>
+        <div class="app-update-actions">
+          <button id="app-update-install" class="primary" type="button" hidden>Instalar agora</button>
+          <button id="app-update-dismiss" class="ghost" type="button" aria-label="Dispensar aviso">×</button>
+        </div>
+      </section>
 
       <section id="landing" class="landing-screen">
         <div class="landing-card card">
@@ -78,15 +89,31 @@
           </div>
 
           <div class="sidebar-bottom">
-            <div class="sidebar-action-row">
-              <button id="audio-settings-open" class="sidebar-action" type="button" title="Configurações de áudio" aria-label="Configurações de áudio">☷</button>
-              <span class="sidebar-hint">Áudio e chamada</span>
+            <div class="voice-controls" role="group" aria-label="Controles de voz">
+              <button id="voice-microphone" class="voice-control" type="button" data-state="muted" aria-pressed="false" title="Ativar microfone" aria-label="Ativar microfone">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" />
+                  <path d="M19 11a7 7 0 0 1-14 0M12 18v4M8 22h8" />
+                </svg>
+              </button>
+              <button id="voice-deafen" class="voice-control" type="button" data-state="active" aria-pressed="false" title="Ensurdecer chamada" aria-label="Ensurdecer chamada">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 14a8 8 0 0 1 16 0" />
+                  <path d="M4 14v4a2 2 0 0 0 2 2h1v-6H5a1 1 0 0 0-1 1ZM20 14v4a2 2 0 0 1-2 2h-1v-6h2a1 1 0 0 1 1 1Z" />
+                </svg>
+              </button>
+              <button id="audio-settings-open" class="voice-control voice-settings" type="button" title="Configurações de áudio" aria-label="Configurações de áudio">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+                  <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.8 1.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.1h-2.5v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-1.8-1.8.1-.1A1.7 1.7 0 0 0 8.1 15a1.7 1.7 0 0 0-1.5-1H6.5v-2.5h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.8-1.8.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.1H15v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.8 1.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1V14h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+                </svg>
+              </button>
             </div>
             <button id="leave-room" class="leave-button ghost">Sair da sala</button>
           </div>
         </aside>
 
-        <section class="call-card card">
+        <section class="call-card">
           <div class="call-heading">
             <div>
               <span class="eyebrow">03 / CHAMADA</span>
@@ -104,21 +131,44 @@
           </div>
 
           <div class="call-controls">
-            <div class="call-action-row">
-              <button id="microphone" disabled><span class="button-icon">♩</span> Ativar microfone</button>
-              <button id="screen-share"><span class="button-icon">▣</span> Compartilhar tela</button>
-              <button id="screen-fullscreen" disabled><span class="button-icon">⛶</span> Tela cheia</button>
+            <div class="call-control-bar">
+              <!-- Mantido no DOM para a lógica existente; o controle principal fica na barra lateral. -->
+              <button id="microphone" hidden disabled><span class="button-icon">♩</span> Ativar microfone</button>
+              <button id="screen-share" class="screen-share-button">
+                <span class="button-icon" aria-hidden="true">▣</span>
+                <span id="screen-share-label">Compartilhar tela</span>
+              </button>
+              <button id="screen-fullscreen" class="screen-fullscreen-button" disabled title="Tela cheia" aria-label="Tela cheia">
+                <span class="button-icon" aria-hidden="true">⛶</span>
+                <span id="screen-fullscreen-label" class="sr-only">Tela cheia</span>
+              </button>
+              <div class="screen-volume-control">
+                <span class="screen-volume-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M4 10v4h4l5 4V6l-5 4H4Z" />
+                    <path d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10" />
+                  </svg>
+                </span>
+                <label class="audio-range-label" for="screen-volume">
+                  <span>Volume</span>
+                  <output id="screen-volume-value" for="screen-volume">100%</output>
+                </label>
+                <input id="screen-volume" type="range" min="0" max="100" step="1" value="100" disabled />
+              </div>
             </div>
             <button id="reconnect-call" class="ghost reconnect-button" hidden>↻ &nbsp;Reconectar chamadas</button>
             <div id="screen-share-list" class="screen-share-list" aria-live="polite"></div>
-            <div class="screen-volume-control">
-              <label class="audio-range-label" for="screen-volume">
-                <span>Volume da transmissão</span>
-                <output id="screen-volume-value" for="screen-volume">100%</output>
-              </label>
-              <input id="screen-volume" type="range" min="0" max="100" step="1" value="100" disabled />
+            <div class="screen-status-row">
+              <span id="screen-audio-status" class="small muted screen-audio-status">Áudio da tela: desativado</span>
+              <button id="screen-diagnostics-toggle" class="screen-diagnostics-toggle ghost" type="button" hidden aria-expanded="false">Detalhes</button>
             </div>
-            <span id="screen-audio-status" class="small muted screen-audio-status">Áudio da tela: desativado</span>
+            <section id="screen-diagnostics" class="screen-diagnostics" hidden aria-label="Diagnóstico da transmissão">
+              <div class="screen-diagnostics-heading">
+                <span>Diagnóstico local do envio</span>
+                <span class="small muted">por espectador</span>
+              </div>
+              <div id="screen-diagnostics-list" class="screen-diagnostics-list"></div>
+            </section>
           </div>
         </section>
       </section>
@@ -133,9 +183,12 @@
           <div id="source-list" class="source-list"></div>
           <label class="small muted" for="screen-quality">Qualidade da transmissão</label>
           <select id="screen-quality">
-            <option value="720p">720p · 30 fps (melhor imagem)</option>
-            <option value="480p">480p · 30 fps (menos banda)</option>
+            <option value="balanced">Equilibrado · 720p/30 (recomendado)</option>
+            <option value="economic">Econômico · 480p/30 (menos banda)</option>
+            <option value="sharp">Nitidez · 1080p/30 (texto e trabalho)</option>
+            <option value="fluid">Fluido · 720p/60 (vídeo e jogos)</option>
           </select>
+          <p class="screen-quality-note muted">A qualidade pode ser reduzida automaticamente para cada espectador quando a rede ficar instável.</p>
           <label class="screen-audio-option" for="include-screen-audio">
             <input id="include-screen-audio" type="checkbox">
             <span>Incluir áudio do sistema</span>
@@ -162,7 +215,8 @@
           <section class="audio-settings" aria-labelledby="audio-processing-title">
             <div class="settings-section-title" id="audio-processing-title">◌ &nbsp; PROCESSAMENTO</div>
             <label class="audio-option"><input id="echo-cancellation" type="checkbox" checked /><span>Cancelamento de eco</span></label>
-            <label class="audio-option"><input id="noise-suppression" type="checkbox" checked /><span>Supressão de ruído</span></label>
+            <label class="audio-option audio-mode-option"><span>Supressão de ruído</span><select id="noise-suppression-mode" aria-label="Modo de supressão de ruído"><option value="native">Nativa (WebRTC)</option><option value="rnnoise">RNNoise (mais forte)</option><option value="off">Desativada</option></select></label>
+            <span class="small muted audio-help">RNNoise roda localmente e pode usar mais CPU.</span>
             <label class="audio-option"><input id="auto-gain-control" type="checkbox" checked /><span>Ganho automático</span></label>
             <label class="audio-option"><input id="process-microphone-test" type="checkbox" /><span>Aplicar ao teste de retorno</span></label>
             <label class="audio-option"><input id="push-to-talk" type="checkbox" /><span>Pressionar para falar</span></label>
@@ -176,6 +230,16 @@
             <div class="meter" aria-label="Nível do microfone"><span id="microphone-level"></span></div>
             <button id="test-microphone" class="ghost">Ouvir microfone</button>
             <span id="microphone-test-status" class="small muted">Use fones para evitar microfonia.</span>
+          </section>
+          <section class="settings-section app-update-settings" aria-labelledby="app-update-settings-title">
+            <div class="test-heading">
+              <span id="app-update-settings-title" class="settings-section-title">↻ &nbsp; APLICATIVO</span>
+              <span id="app-version-label" class="small muted">Versão —</span>
+            </div>
+            <div class="app-update-settings-row">
+              <span id="app-update-settings-status" class="small muted">Verifique se há uma nova versão.</span>
+              <button id="app-update-check" class="ghost" type="button">Verificar atualizações</button>
+            </div>
           </section>
           <div class="settings-footer"><button id="audio-settings-reset" class="ghost" type="button">Restaurar padrão</button><button id="audio-settings-apply" class="primary" type="button">Aplicar</button></div>
         </div>

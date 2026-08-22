@@ -1,12 +1,99 @@
 const path = require('node:path');
 const { app, BrowserWindow, desktopCapturer, ipcMain, Menu, nativeImage, session, shell, Tray } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
 let tray;
 let selectedDisplaySourceId;
 let isQuitting = false;
 let pendingDeepLink;
+let updateCheckTimer;
+let updateState = Object.freeze({ status: 'unavailable' });
 pendingDeepLink = process.argv.find((argument) => argument.startsWith('voiceroom://'));
+
+const UPDATE_CHECK_DELAY_MS = 15_000;
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
+
+function publishUpdateState(nextState) {
+  updateState = Object.freeze({
+    ...nextState,
+    checkedAt: Date.now()
+  });
+  if (mainWindow?.webContents && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:update-state', updateState);
+  }
+}
+
+function formatUpdateError(error) {
+  const message = String(error?.message || error || 'Não foi possível verificar atualizações.');
+  return message.length > 240 ? `${message.slice(0, 237)}…` : message;
+}
+
+async function checkForUpdates({ manual = false } = {}) {
+  if (!app.isPackaged) {
+    publishUpdateState({ status: 'unavailable', reason: 'development' });
+    return updateState;
+  }
+  if (updateState.status === 'downloading') return updateState;
+  publishUpdateState({ status: 'checking', manual });
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (!result?.isUpdateAvailable) {
+      publishUpdateState({
+        status: 'idle',
+        version: result?.updateInfo?.version || app.getVersion(),
+        manual
+      });
+    }
+    return updateState;
+  } catch (error) {
+    publishUpdateState({ status: 'error', message: formatUpdateError(error), manual });
+    return updateState;
+  }
+}
+
+function configureAutoUpdates() {
+  if (!app.isPackaged) {
+    publishUpdateState({ status: 'unavailable', reason: 'development' });
+    return;
+  }
+
+  // O download acontece em segundo plano e a instalação fica para a saída do
+  // app, evitando interromper uma chamada em andamento.
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.on('checking-for-update', () => publishUpdateState({ status: 'checking' }));
+  autoUpdater.on('update-available', (info) => publishUpdateState({
+    status: 'available',
+    version: info?.version || 'nova',
+    releaseDate: info?.releaseDate || null
+  }));
+  autoUpdater.on('download-progress', (progress) => publishUpdateState({
+    status: 'downloading',
+    version: updateState.version || null,
+    percent: Math.max(0, Math.min(100, Number(progress?.percent) || 0)),
+    transferred: progress?.transferred || 0,
+    total: progress?.total || 0
+  }));
+  autoUpdater.on('update-downloaded', (info) => publishUpdateState({
+    status: 'downloaded',
+    version: info?.version || updateState.version || 'nova'
+  }));
+  autoUpdater.on('update-not-available', (info) => publishUpdateState({
+    status: 'idle',
+    version: info?.version || app.getVersion()
+  }));
+  autoUpdater.on('error', (error) => publishUpdateState({
+    status: 'error',
+    message: formatUpdateError(error)
+  }));
+
+  updateCheckTimer = setTimeout(() => {
+    checkForUpdates();
+    updateCheckTimer = setInterval(() => checkForUpdates(), UPDATE_CHECK_INTERVAL_MS);
+  }, UPDATE_CHECK_DELAY_MS);
+}
 
 const singleInstanceLock = app.requestSingleInstanceLock();
 if (!singleInstanceLock) {
@@ -116,6 +203,15 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('app:get-version', () => app.getVersion());
+  ipcMain.handle('app:get-update-state', () => updateState);
+  ipcMain.handle('app:update-check', () => checkForUpdates({ manual: true }));
+  ipcMain.handle('app:update-install', () => {
+    if (updateState.status !== 'downloaded') return false;
+    isQuitting = true;
+    tray?.destroy();
+    autoUpdater.quitAndInstall(false, true);
+    return true;
+  });
   ipcMain.handle('desktop-capturer:get-sources', async () => {
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],
@@ -144,6 +240,7 @@ app.whenReady().then(() => {
     });
   }
   createWindow();
+  configureAutoUpdates();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -161,5 +258,10 @@ app.on('before-quit', () => {
 });
 
 app.on('will-quit', () => {
+  if (updateCheckTimer) {
+    clearTimeout(updateCheckTimer);
+    clearInterval(updateCheckTimer);
+    updateCheckTimer = undefined;
+  }
   tray?.destroy();
 });

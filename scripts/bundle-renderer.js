@@ -7,16 +7,28 @@ const isProduction = process.argv.includes('--production');
 const signalingServer = process.env.VOICEROOM_SIGNALING_SERVER
   || (isProduction ? PRODUCTION_SIGNALING_SERVER : LOCAL_SIGNALING_SERVER);
 
-esbuild.build({
-  entryPoints: [path.resolve(__dirname, '..', 'client', 'src', 'renderer', 'app.js')],
+const rendererOptions = {
   bundle: true,
   platform: 'browser',
-  format: 'iife',
   target: 'es2022',
-  outfile: path.resolve(__dirname, '..', 'client', 'src', 'renderer', 'app.bundle.js'),
-  define: {
-    'window.VOICEROOM_SIGNALING_SERVER': JSON.stringify(signalingServer)
-  },
   sourcemap: false,
   logLevel: 'info'
-}).catch(() => process.exit(1));
+};
+
+Promise.all([
+  esbuild.build({
+    ...rendererOptions,
+    entryPoints: [path.resolve(__dirname, '..', 'client', 'src', 'renderer', 'app.js')],
+    format: 'iife',
+    outfile: path.resolve(__dirname, '..', 'client', 'src', 'renderer', 'app.bundle.js'),
+    define: {
+      'window.VOICEROOM_SIGNALING_SERVER': JSON.stringify(signalingServer)
+    }
+  }),
+  esbuild.build({
+    ...rendererOptions,
+    entryPoints: [path.resolve(__dirname, '..', 'client', 'src', 'renderer', 'rnnoise-worklet.js')],
+    format: 'esm',
+    outfile: path.resolve(__dirname, '..', 'client', 'src', 'renderer', 'rnnoise-worklet.bundle.js')
+  })
+]).catch(() => process.exit(1));

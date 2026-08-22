@@ -1,6 +1,6 @@
 {
   "name": "voiceroom",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Aplicativo desktop minimalista de voz e compartilhamento de tela.",
   "private": true,
   "main": "client/src/main/main.js",
@@ -14,7 +14,7 @@
     "server": "node server/src/server.js",
     "dev": "concurrently -k \"npm:server\" \"npm:start\"",
     "test": "node --test tests/*.test.js",
-    "check": "node --check server/src/server.js && node --check client/src/main/main.js && node --check client/src/renderer/app.js && node --check client/src/renderer/webrtc.js",
+    "check": "node --check server/src/server.js && node --check client/src/main/main.js && node --check client/src/preload/preload.js && node --check client/src/renderer/app.js && node --check client/src/renderer/webrtc.js && node --check client/src/renderer/screen-quality.js && node --check client/src/renderer/rnnoise-worklet.js",
     "bundle:renderer": "node scripts/bundle-renderer.js",
     "bundle:renderer:production": "node scripts/bundle-renderer.js --production",
     "prebuild": "npm run bundle:renderer:production",
@@ -48,6 +48,12 @@
       "icon": "client/assets/voice-icon.ico",
       "target": "nsis"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "marcio1335",
+      "repo": "voiceroom",
+      "releaseType": "release"
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
@@ -58,5 +64,9 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
+  },
+  "dependencies": {
+    "@shiguredo/rnnoise-wasm": "^2025.1.5",
+    "electron-updater": "^6.8.9"
   }
 }

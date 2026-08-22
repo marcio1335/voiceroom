@@ -6,3 +6,4 @@ release/
 coverage/
 .DS_Store
 client/src/renderer/app.bundle.js
+client/src/renderer/rnnoise-worklet.bundle.js
