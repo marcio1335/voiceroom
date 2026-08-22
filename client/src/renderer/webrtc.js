@@ -111,6 +111,7 @@ class PeerManager {
     this.audioContext = null;
     this.audioGainNode = null;
     this.screenStream = null;
+    this.screenViewers = new Set();
     this.microphoneLoopback = null;
     this.muted = false;
   }
@@ -332,13 +333,23 @@ class PeerManager {
 
   async handleOffer(fromParticipantId, description) {
     const peer = this.peers.get(fromParticipantId) || this.#createPeer({ participantId: fromParticipantId });
+    const offerCollision = description?.type === 'offer'
+      && (peer.makingOffer || peer.connection.signalingState !== 'stable');
+    peer.ignoreOffer = !peer.polite && offerCollision;
+    if (peer.ignoreOffer) return;
+    if (offerCollision && peer.connection.signalingState !== 'stable') {
+      await peer.connection.setLocalDescription({ type: 'rollback' });
+      // A polite peer may have local tracks that were not included in the
+      // incoming offer. Ask for a follow-up negotiation after answering it.
+      peer.needsNegotiation = true;
+    }
     await peer.connection.setRemoteDescription(description);
     for (const candidate of peer.pendingCandidates.splice(0)) {
       await peer.connection.addIceCandidate(candidate);
     }
-    const answer = await peer.connection.createAnswer();
-    await peer.connection.setLocalDescription(answer);
+    await peer.connection.setLocalDescription(await peer.connection.createAnswer());
     await this.socket.sendSignal('peer:answer', fromParticipantId, { description: peer.connection.localDescription });
+    if (peer.needsNegotiation) await this.#renegotiate(peer);
   }
 
   async handleAnswer(fromParticipantId, description) {
@@ -348,10 +359,12 @@ class PeerManager {
     for (const candidate of peer.pendingCandidates.splice(0)) {
       await peer.connection.addIceCandidate(candidate);
     }
+    if (peer.needsNegotiation) await this.#renegotiate(peer);
   }
 
   async handleIce(fromParticipantId, candidate) {
     const peer = this.peers.get(fromParticipantId) || this.#createPeer({ participantId: fromParticipantId });
+    if (peer.ignoreOffer) return;
     if (!peer.connection.remoteDescription) {
       peer.pendingCandidates.push(candidate);
       return;
@@ -386,10 +399,7 @@ class PeerManager {
       }
       track.onended = () => this.stopScreenShare().catch(() => {});
       this.screenStream = stream;
-      for (const peer of this.peers.values()) {
-        peer.screenSenders = stream.getTracks().map((screenTrack) => peer.connection.addTrack(screenTrack, stream));
-        await this.#renegotiate(peer);
-      }
+      for (const participantId of this.screenViewers) await this.setScreenViewer(participantId, true);
       return stream;
     } catch (error) {
       await this.socket.stopScreenShare();
@@ -400,6 +410,7 @@ class PeerManager {
   async stopScreenShare() {
     if (!this.screenStream) return;
     this.screenStream.getTracks().forEach((track) => track.stop());
+    this.screenViewers.clear();
     for (const peer of this.peers.values()) {
       if (peer.screenSenders?.length) {
         for (const sender of peer.screenSenders) peer.connection.removeTrack(sender);
@@ -409,6 +420,27 @@ class PeerManager {
     }
     this.screenStream = null;
     await this.socket.stopScreenShare();
+  }
+
+  async setScreenViewer(participantId, shouldWatch) {
+    if (!participantId || participantId === this.selfId) return;
+    if (shouldWatch) this.screenViewers.add(participantId);
+    else this.screenViewers.delete(participantId);
+
+    const peer = this.peers.get(participantId) || (shouldWatch ? this.#createPeer({ participantId }) : null);
+    if (!peer) return;
+
+    if (shouldWatch) {
+      if (!this.screenStream || peer.screenSenders.length) return;
+      peer.screenSenders = this.screenStream.getTracks().map((track) => peer.connection.addTrack(track, this.screenStream));
+      await this.#renegotiate(peer);
+      return;
+    }
+
+    if (!peer.screenSenders.length) return;
+    for (const sender of peer.screenSenders) peer.connection.removeTrack(sender);
+    peer.screenSenders = [];
+    await this.#renegotiate(peer);
   }
 
   close() {
@@ -423,6 +455,8 @@ class PeerManager {
     if (audioCaptureStream && audioCaptureStream !== audioStream) stopStream(audioCaptureStream);
     closeAudioContext(audioContext).catch(() => {});
     stopStream(this.screenStream);
+    this.screenStream = null;
+    this.screenViewers.clear();
     this.stopMicrophoneLoopback().catch(() => {});
     for (const participantId of this.peers.keys()) this.removePeer(participantId);
   }
@@ -438,13 +472,24 @@ class PeerManager {
 
   #createPeer(participant) {
     const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    const peer = { participantId: participant.participantId, connection, pendingCandidates: [], audioSender: null, screenSenders: [] };
+    const peer = {
+      participantId: participant.participantId,
+      connection,
+      pendingCandidates: [],
+      audioSender: null,
+      screenSenders: [],
+      negotiationQueue: Promise.resolve(),
+      polite: this.selfId > participant.participantId,
+      makingOffer: false,
+      ignoreOffer: false,
+      needsNegotiation: false
+    };
     this.peers.set(participant.participantId, peer);
     if (this.audioStream) {
       const audioTrack = this.audioStream.getAudioTracks()[0];
       if (audioTrack) peer.audioSender = connection.addTrack(audioTrack, this.audioStream);
     }
-    if (this.screenStream) {
+    if (this.screenStream && this.screenViewers.has(participant.participantId)) {
       peer.screenSenders = this.screenStream.getTracks().map((track) => connection.addTrack(track, this.screenStream));
     }
     connection.onicecandidate = ({ candidate }) => {
@@ -463,9 +508,30 @@ class PeerManager {
 
   async #renegotiate(peer) {
     if (!peer || !this.peers.has(peer.participantId)) return;
-    const offer = await peer.connection.createOffer();
-    await peer.connection.setLocalDescription(offer);
-    await this.socket.sendSignal('peer:offer', peer.participantId, { description: peer.connection.localDescription });
+    peer.needsNegotiation = true;
+    const negotiate = async () => {
+      if (!this.peers.has(peer.participantId)) return;
+      if (peer.connection.signalingState !== 'stable') return;
+      peer.needsNegotiation = false;
+      peer.makingOffer = true;
+      try {
+        const offer = await peer.connection.createOffer();
+        if (peer.connection.signalingState !== 'stable') {
+          peer.needsNegotiation = true;
+          return;
+        }
+        await peer.connection.setLocalDescription(offer);
+        await this.socket.sendSignal('peer:offer', peer.participantId, { description: peer.connection.localDescription });
+      } catch (error) {
+        peer.needsNegotiation = true;
+        throw error;
+      } finally {
+        peer.makingOffer = false;
+      }
+    };
+    const next = peer.negotiationQueue.catch(() => {}).then(negotiate);
+    peer.negotiationQueue = next.catch(() => {});
+    return next;
   }
 }
 

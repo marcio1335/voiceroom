@@ -24,7 +24,16 @@ class SocketClient {
     });
     this.socket.on('disconnect', (reason) => this.onEvent('disconnect', { reason }));
     this.socket.on('connect_error', (error) => this.onEvent('connect-error', { message: error.message }));
-    for (const event of ['room:state', 'peer:offer', 'peer:answer', 'peer:ice', 'screen:started', 'screen:stopped']) {
+    for (const event of [
+      'room:state',
+      'peer:offer',
+      'peer:answer',
+      'peer:ice',
+      'screen:started',
+      'screen:stopped',
+      'screen:viewer-joined',
+      'screen:viewer-left'
+    ]) {
       this.socket.on(event, (payload) => this.onEvent(event, payload));
     }
   }
@@ -82,6 +91,14 @@ class SocketClient {
 
   stopScreenShare() {
     return this.request('screen:stop', {});
+  }
+
+  subscribeScreen(ownerParticipantId) {
+    return this.request('screen:subscribe-request', { targetParticipantId: ownerParticipantId });
+  }
+
+  unsubscribeScreen(ownerParticipantId) {
+    return this.request('screen:unsubscribe-request', { targetParticipantId: ownerParticipantId });
   }
 
   close() {

@@ -12,7 +12,7 @@ Esta implementação cobre a fundação `0.1.0` do planejamento:
 - validação de nomes, códigos, protocolo e payloads de signaling;
 - rate limiting inicial e endpoints `/healthz` e `/readyz`;
 - interface para criar/entrar/sair, copiar código e visualizar participantes;
-- base de WebRTC para áudio e compartilhamento de tela.
+- base de WebRTC para áudio e compartilhamento de tela opcional, com até duas transmissões simultâneas por sala.
 
 Artefatos gerados localmente:
 
@@ -82,10 +82,10 @@ Na seção **Áudio** da sala, é possível ativar ou desativar separadamente o 
 
 ## Limitações conhecidas do MVP
 
-- A topologia é WebRTC Mesh e suporta oficialmente até 5 participantes.
+- A topologia é WebRTC Mesh e suporta oficialmente até 5 participantes e até 2 transmissões de tela simultâneas. Cada participante escolhe se quer assistir a cada transmissão; o vídeo é limitado a até 720p/30 fps para preservar banda e CPU.
 - STUN está configurado; TURN ainda não faz parte do MVP, então redes restritivas podem falhar.
 - As salas ficam apenas na memória do processo de sinalização.
-- Compartilhamento de tela possui controle de tela cheia. O áudio do sistema é opcional e, no Windows, pode incluir o Discord e outros aplicativos; deixe a opção desmarcada para evitar eco.
+- Compartilhamento de tela possui controle de tela cheia e botões individuais **Assistir transmissão** / **Parar de assistir**. O áudio do sistema é opcional e, no Windows, pode incluir o Discord e outros aplicativos; deixe a opção desmarcada para evitar eco.
 - O instalador ainda não possui assinatura de código; o Windows SmartScreen pode exibir um aviso.
 
 ## Privacidade

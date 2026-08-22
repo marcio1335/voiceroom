@@ -27,7 +27,8 @@ function messageFor(error) {
   const messages = {
     [ERROR_CODES.ROOM_NOT_FOUND]: 'Esta sala não existe.',
     [ERROR_CODES.ROOM_FULL]: 'A sala atingiu o limite de 5 participantes.',
-    [ERROR_CODES.SCREEN_BUSY]: 'Outro participante já está compartilhando a tela.',
+    [ERROR_CODES.SCREEN_BUSY]: 'A sala já atingiu o limite de 2 transmissões.',
+    [ERROR_CODES.SCREEN_NOT_ACTIVE]: 'Essa transmissão não está ativa.',
     [ERROR_CODES.NOT_SCREEN_OWNER]: 'Você não é o dono do compartilhamento atual.',
     [ERROR_CODES.RATE_LIMITED]: 'Muitas tentativas. Aguarde alguns segundos.',
     [ERROR_CODES.INVALID_PROTOCOL]: 'A versão do aplicativo não é compatível com este servidor.',
@@ -122,7 +123,15 @@ function bindSocket(io, socket) {
     assertPayload(payload);
     const found = getBoundParticipant(socket);
     if (!found) throw new Error('NOT_IN_ROOM');
+    const wasScreenSharing = Boolean(found.participant.screenSharing);
+    const screenParticipantId = found.participant.participantId;
     const removed = rooms.leaveSocket(socket.id);
+    if (wasScreenSharing) {
+      io.to(found.room.code).emit(EVENTS.SCREEN_STOPPED, {
+        participantId: screenParticipantId,
+        protocolVersion: PROTOCOL_VERSION
+      });
+    }
     socket.leave(found.room.code);
     socket.data.participantId = undefined;
     socket.data.roomCode = undefined;
@@ -177,9 +186,41 @@ function bindSocket(io, socket) {
     return { stopped: true };
   }));
 
+  for (const [requestEvent, ownerEvent] of [
+    [EVENTS.SCREEN_SUBSCRIBE_REQUEST, EVENTS.SCREEN_VIEWER_JOINED],
+    [EVENTS.SCREEN_UNSUBSCRIBE_REQUEST, EVENTS.SCREEN_VIEWER_LEFT]
+  ]) {
+    socket.on(requestEvent, withGuard(socket, requestEvent, (payload) => {
+      assertPayload(payload);
+      const found = getBoundParticipant(socket);
+      if (!found) throw new Error('NOT_IN_ROOM');
+      const ownerId = assertTargetParticipant(payload.targetParticipantId);
+      if (ownerId === found.participant.participantId) throw new Error('SCREEN_NOT_ACTIVE');
+      const owner = found.room.participants.get(ownerId);
+      if (!owner || !owner.socketId) throw new Error('PARTICIPANT_NOT_FOUND');
+      if (!found.room.screenSharingParticipantIds.includes(ownerId)) throw new Error('SCREEN_NOT_ACTIVE');
+      io.to(owner.socketId).emit(ownerEvent, {
+        ownerParticipantId: ownerId,
+        viewerParticipantId: found.participant.participantId,
+        protocolVersion: PROTOCOL_VERSION
+      });
+      return { forwarded: true, ownerParticipantId: ownerId };
+    }));
+  }
+
   socket.on('disconnect', () => {
+    const beforeDisconnect = getBoundParticipant(socket);
+    const wasScreenSharing = Boolean(beforeDisconnect?.participant.screenSharing);
+    const roomCode = beforeDisconnect?.room.code;
+    const participantId = beforeDisconnect?.participant.participantId;
     const found = rooms.markDisconnected(socket.id);
     if (found) {
+      if (wasScreenSharing && roomCode) {
+        io.to(roomCode).emit(EVENTS.SCREEN_STOPPED, {
+          participantId,
+          protocolVersion: PROTOCOL_VERSION
+        });
+      }
       broadcastRoom(io, found.room);
       console.log(JSON.stringify({ event: 'participant_disconnected', peerCount: found.room.participants.size }));
     }

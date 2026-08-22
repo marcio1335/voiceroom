@@ -93,10 +93,10 @@
 
         <section class="card call-card">
           <div id="screen-stage" class="screen-stage" data-active="false">
-            <div class="empty-stage">
+            <div id="screen-empty-stage" class="empty-stage">
               <span class="stage-icon">🖥</span>
-              <strong>Nenhuma tela compartilhada</strong>
-              <span class="muted">Quando alguém compartilhar, a tela aparecerá aqui.</span>
+              <strong>Nenhuma transmissão em exibição</strong>
+              <span class="muted">Escolha uma transmissão abaixo para assistir.</span>
             </div>
           </div>
           <div class="call-controls">
@@ -105,6 +105,7 @@
               <button id="screen-share">Compartilhar tela</button>
               <button id="screen-fullscreen" disabled>Tela cheia</button>
             </div>
+            <div id="screen-share-list" class="screen-share-list" aria-live="polite"></div>
             <div class="screen-volume-control">
               <label class="audio-range-label" for="screen-volume">
                 <span>Volume da transmissão</span>
@@ -120,7 +121,7 @@
       <section id="source-picker" class="source-picker" hidden aria-labelledby="source-picker-title">
         <div class="source-picker-card">
           <h2 id="source-picker-title">Escolha o que compartilhar</h2>
-          <p class="muted">Selecione uma janela ou monitor.</p>
+          <p class="muted">Selecione uma janela ou monitor (até 720p/30 fps).</p>
           <div id="source-list" class="source-list"></div>
           <label class="screen-audio-option" for="include-screen-audio">
             <input id="include-screen-audio" type="checkbox">

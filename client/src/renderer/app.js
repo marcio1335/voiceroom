@@ -30,6 +30,8 @@ const elements = {
   screenAudioStatus: document.querySelector('#screen-audio-status'),
   leave: document.querySelector('#leave-room'),
   screenStage: document.querySelector('#screen-stage'),
+  screenEmptyStage: document.querySelector('#screen-empty-stage'),
+  screenShareList: document.querySelector('#screen-share-list'),
   sourcePicker: document.querySelector('#source-picker'),
   sourceList: document.querySelector('#source-list'),
   includeScreenAudio: document.querySelector('#include-screen-audio'),
@@ -46,6 +48,9 @@ let currentRoom;
 let muted = false;
 let sharingScreen = false;
 let screenVolumeLevel = 1;
+let selectedScreenParticipantId = null;
+const watchingScreenIds = new Set();
+const screenAudioSourceIds = new Set();
 
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
 const DEFAULT_AUDIO_SETTINGS = Object.freeze({
@@ -202,8 +207,14 @@ function showNotice(message, type = 'error') {
 function responseError(response) {
   if (response?.errorCode === 'ROOM_NOT_FOUND') return 'Esta sala não existe.';
   if (response?.errorCode === 'ROOM_FULL') return 'A sala atingiu o limite de 5 participantes.';
-  if (response?.errorCode === 'SCREEN_BUSY') return 'Outro participante já está compartilhando a tela.';
+  if (response?.errorCode === 'SCREEN_BUSY') return 'A sala já atingiu o limite de 2 transmissões.';
+  if (response?.errorCode === 'SCREEN_NOT_ACTIVE') return 'Essa transmissão não está ativa.';
   return response?.message || 'Não foi possível concluir a operação.';
+}
+
+function getScreenParticipantIds(room) {
+  if (Array.isArray(room?.screenSharingParticipantIds)) return room.screenSharingParticipantIds;
+  return (room?.participants || []).filter((participant) => participant.screenSharing).map((participant) => participant.participantId);
 }
 
 function renderParticipants() {
@@ -227,10 +238,44 @@ function renderParticipants() {
 function renderRoom(room) {
   currentRoom = room;
   elements.activeCode.textContent = room.code;
-  elements.screen.disabled = Boolean(room.screenSharingParticipantId && room.screenSharingParticipantId !== selfId);
+  const screenParticipantIds = getScreenParticipantIds(room);
+  elements.screen.disabled = !sharingScreen && screenParticipantIds.length >= 2;
   elements.screen.textContent = sharingScreen ? 'Parar tela' : 'Compartilhar tela';
+  for (const participantId of [...watchingScreenIds]) {
+    if (!screenParticipantIds.includes(participantId)) {
+      watchingScreenIds.delete(participantId);
+      removeScreenStream(participantId);
+    }
+  }
+  renderScreenShareList(room);
   renderParticipants();
   peerManager?.syncParticipants(room.participants).catch((error) => showNotice(error.message));
+}
+
+function renderScreenShareList(room) {
+  elements.screenShareList.replaceChildren();
+  const activeParticipants = (room?.participants || []).filter((participant) => (
+    participant.screenSharing || (participant.participantId === selfId && sharingScreen)
+  ));
+  for (const participant of activeParticipants) {
+    if (participant.participantId === selfId) {
+      const status = document.createElement('span');
+      status.className = 'screen-share-self small muted';
+      status.textContent = 'Você está transmitindo';
+      elements.screenShareList.append(status);
+      continue;
+    }
+    const watching = watchingScreenIds.has(participant.participantId);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'screen-share-option';
+    button.setAttribute('aria-pressed', String(watching));
+    button.textContent = watching
+      ? `Parar de assistir — ${participant.displayName}`
+      : `Assistir transmissão — ${participant.displayName}`;
+    button.addEventListener('click', () => toggleScreenWatching(participant.participantId));
+    elements.screenShareList.append(button);
+  }
 }
 
 function enterRoom(result) {
@@ -254,26 +299,37 @@ function enterRoom(result) {
 }
 
 function renderScreenStream(participantId, stream, { muted = false } = {}) {
-  let video = document.querySelector(`[data-participant-video="${participantId}"]`);
+  let tile = document.querySelector(`[data-screen-tile="${participantId}"]`);
+  let video = tile?.querySelector('[data-participant-video]');
+  if (!tile) {
+    tile = document.createElement('article');
+    tile.className = 'screen-tile';
+    tile.dataset.screenTile = participantId;
+    tile.addEventListener('click', () => selectScreenParticipant(participantId));
+    const label = document.createElement('span');
+    label.className = 'screen-tile-label';
+    label.textContent = currentRoom?.participants.find((participant) => participant.participantId === participantId)?.displayName || 'Tela compartilhada';
+    tile.append(label);
+    elements.screenStage.append(tile);
+  }
   if (!video) {
     video = document.createElement('video');
     video.autoplay = true;
     video.playsInline = true;
     video.dataset.participantVideo = participantId;
-    video.addEventListener('dblclick', toggleScreenFullscreen);
-    elements.screenStage.replaceChildren(video);
+    video.addEventListener('dblclick', () => toggleScreenFullscreen(participantId));
+    tile.append(video);
   }
   video.muted = muted;
   video.srcObject = stream;
   video.play().catch(() => {});
   elements.screenStage.dataset.active = 'true';
   const hasScreenAudio = Boolean(stream.getAudioTracks?.().length);
-  elements.screenVolume.disabled = !hasScreenAudio;
-  if (hasScreenAudio) updateScreenVolume();
-  elements.screenFullscreen.disabled = false;
-  elements.screenAudioStatus.textContent = hasScreenAudio
-    ? 'Áudio do sistema ativo'
-    : 'Vídeo compartilhado sem áudio';
+  if (hasScreenAudio) screenAudioSourceIds.add(participantId);
+  else screenAudioSourceIds.delete(participantId);
+  if (!selectedScreenParticipantId) selectedScreenParticipantId = participantId;
+  updateScreenStageControls();
+  selectScreenParticipant(selectedScreenParticipantId);
 }
 
 function attachRemoteStream(participantId, track, stream) {
@@ -290,6 +346,8 @@ function attachRemoteStream(participantId, track, stream) {
     }
     audio.srcObject = new MediaStream([track]);
     if (isScreenAudio) {
+      audio.dataset.screenAudio = 'true';
+      screenAudioSourceIds.add(participantId);
       elements.screenVolume.disabled = false;
       audio.volume = screenVolumeLevel;
       audio.muted = screenVolumeLevel === 0;
@@ -303,8 +361,42 @@ function attachRemoteStream(participantId, track, stream) {
   renderScreenStream(participantId, stream, { muted: true });
 }
 
-async function toggleScreenFullscreen() {
-  const video = document.querySelector('[data-participant-video]');
+function selectScreenParticipant(participantId) {
+  if (!document.querySelector(`[data-screen-tile="${participantId}"]`)) return;
+  selectedScreenParticipantId = participantId;
+  document.querySelectorAll('[data-screen-tile]').forEach((tile) => {
+    tile.dataset.selected = String(tile.dataset.screenTile === participantId);
+  });
+}
+
+function updateScreenStageControls() {
+  const tiles = [...document.querySelectorAll('[data-screen-tile]')];
+  const hasTiles = tiles.length > 0;
+  elements.screenStage.dataset.active = String(hasTiles);
+  elements.screenEmptyStage.hidden = hasTiles;
+  elements.screenFullscreen.disabled = !hasTiles;
+  elements.screenVolume.disabled = screenAudioSourceIds.size === 0;
+  elements.screenAudioStatus.textContent = hasTiles
+    ? `${tiles.length} transmissão${tiles.length === 1 ? '' : 'ões'} em exibição${screenAudioSourceIds.size ? ' com áudio' : ''}`
+    : 'Áudio da tela: desativado';
+  if (selectedScreenParticipantId && !document.querySelector(`[data-screen-tile="${selectedScreenParticipantId}"]`)) {
+    selectedScreenParticipantId = tiles[0]?.dataset.screenTile || null;
+  }
+  if (selectedScreenParticipantId) selectScreenParticipant(selectedScreenParticipantId);
+}
+
+function removeScreenStream(participantId) {
+  document.querySelector(`[data-screen-tile="${participantId}"]`)?.remove();
+  document.querySelectorAll('[data-participant-audio]').forEach((audio) => {
+    if (audio.dataset.participantAudio.startsWith(`${participantId}-`) && audio.dataset.screenAudio === 'true') audio.remove();
+  });
+  screenAudioSourceIds.delete(participantId);
+  updateScreenStageControls();
+}
+
+async function toggleScreenFullscreen(participantId = selectedScreenParticipantId) {
+  const tile = document.querySelector(`[data-screen-tile="${participantId}"]`);
+  const video = tile?.querySelector('[data-participant-video]');
   if (!video) return;
   try {
     if (document.fullscreenElement) {
@@ -315,7 +407,7 @@ async function toggleScreenFullscreen() {
     // Fullscreen the stable stage container instead of the MediaStream video
     // itself. This keeps the WebRTC element attached to the same layout and
     // avoids black frames when Chromium/Electron changes fullscreen surfaces.
-    const target = elements.screenStage;
+    const target = tile || elements.screenStage;
     if (target.requestFullscreen) {
       await target.requestFullscreen({ navigationUI: 'hide' });
     } else if (target.webkitRequestFullscreen) {
@@ -351,11 +443,30 @@ function setScreenVolume(value) {
   updateScreenVolume();
 }
 
+async function toggleScreenWatching(participantId) {
+  if (!peerManager || participantId === selfId) return;
+  const watching = watchingScreenIds.has(participantId);
+  const response = watching
+    ? await socketClient.unsubscribeScreen(participantId)
+    : await socketClient.subscribeScreen(participantId);
+  if (!response?.ok) {
+    showNotice(responseError(response));
+    return;
+  }
+  if (watching) {
+    watchingScreenIds.delete(participantId);
+    removeScreenStream(participantId);
+  } else {
+    watchingScreenIds.add(participantId);
+  }
+  renderScreenShareList(currentRoom);
+}
+
 function removeParticipantMedia(participantId) {
   document.querySelectorAll('[data-participant-audio]').forEach((audio) => {
     if (audio.dataset.participantAudio.startsWith(`${participantId}-`)) audio.remove();
   });
-  document.querySelector(`[data-participant-video="${participantId}"]`)?.remove();
+  removeScreenStream(participantId);
 }
 
 async function initializeAudio() {
@@ -458,11 +569,7 @@ async function toggleScreen() {
     if (sharingScreen) {
       await peerManager.stopScreenShare();
       sharingScreen = false;
-      elements.screenStage.replaceChildren();
-      elements.screenStage.dataset.active = 'false';
-      elements.screenVolume.disabled = true;
-      elements.screenFullscreen.disabled = true;
-      elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
+      removeScreenStream(selfId);
       renderRoom(currentRoom);
       return;
     }
@@ -522,9 +629,15 @@ async function leaveRoom() {
   roomCode = null;
   currentRoom = null;
   sharingScreen = false;
+  watchingScreenIds.clear();
+  screenAudioSourceIds.clear();
+  selectedScreenParticipantId = null;
   elements.room.hidden = true;
   elements.landing.hidden = false;
-  elements.screenStage.replaceChildren();
+  elements.screenStage.querySelectorAll('[data-screen-tile]').forEach((tile) => tile.remove());
+  elements.screenStage.querySelectorAll('[data-participant-audio]').forEach((audio) => audio.remove());
+  elements.screenEmptyStage.hidden = false;
+  elements.screenStage.dataset.active = 'false';
   elements.screenVolume.disabled = true;
   elements.screenFullscreen.disabled = true;
   elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
@@ -574,18 +687,22 @@ function handleSocketEvent(event, payload) {
     peerManager?.handleIce(payload.fromParticipantId, payload.signal.candidate).catch(() => {});
     return;
   }
+  if (event === 'screen:viewer-joined') {
+    if (payload.ownerParticipantId === selfId) {
+      peerManager?.setScreenViewer(payload.viewerParticipantId, true).catch((error) => showNotice(error.message));
+    }
+    return;
+  }
+  if (event === 'screen:viewer-left') {
+    if (payload.ownerParticipantId === selfId) {
+      peerManager?.setScreenViewer(payload.viewerParticipantId, false).catch((error) => showNotice(error.message));
+    }
+    return;
+  }
   if (event === 'screen:stopped') {
-    elements.screenStage.replaceChildren();
-    elements.screenStage.dataset.active = 'false';
-    elements.screenVolume.disabled = true;
-    elements.screenFullscreen.disabled = true;
-    elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
     if (payload.participantId) {
-      document.querySelectorAll('[data-participant-audio]').forEach((audio) => {
-        if (audio.dataset.participantAudio.startsWith(`${payload.participantId}-`) && audio.dataset.screenAudio === 'true') {
-          audio.remove();
-        }
-      });
+      watchingScreenIds.delete(payload.participantId);
+      removeScreenStream(payload.participantId);
     }
     if (payload.participantId === selfId) sharingScreen = false;
     if (currentRoom) renderRoom(currentRoom);

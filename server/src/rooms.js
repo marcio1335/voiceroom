@@ -6,6 +6,7 @@ const {
 } = require('../../shared/config');
 
 const RECONNECT_GRACE_MS = 30_000;
+const MAX_SCREEN_SHARES_PER_ROOM = 2;
 
 function randomId(bytes = 16) {
   return crypto.randomBytes(bytes).toString('hex');
@@ -43,7 +44,13 @@ class RoomStore {
       throw new Error('Não foi possível gerar o código da sala');
     }
     const participant = this.#newParticipant(displayName);
-    const room = { code, participants: new Map([[participant.participantId, participant]]), screenSharingParticipantId: null, createdAt: this.now() };
+    const room = {
+      code,
+      participants: new Map([[participant.participantId, participant]]),
+      screenSharingParticipantIds: [],
+      screenSharingParticipantId: null,
+      createdAt: this.now()
+    };
     this.rooms.set(code, room);
     return { room, participant };
   }
@@ -100,9 +107,8 @@ class RoomStore {
     const { participant } = found;
     participant.socketId = null;
     participant.disconnectedAt = this.now();
-    if (found.room.screenSharingParticipantId === participant.participantId) {
-      found.room.screenSharingParticipantId = null;
-      participant.screenSharing = false;
+    if (found.room.screenSharingParticipantIds.includes(participant.participantId)) {
+      this.#removeScreenShare(found.room, participant.participantId);
     }
     this.#clearResumeTimer(participant.participantId);
     const timer = setTimeout(() => {
@@ -126,9 +132,7 @@ class RoomStore {
     if (!participant) return null;
     this.#clearResumeTimer(participantId);
     room.participants.delete(participantId);
-    if (room.screenSharingParticipantId === participantId) {
-      room.screenSharingParticipantId = null;
-    }
+    if (room.screenSharingParticipantIds.includes(participantId)) this.#removeScreenShare(room, participantId);
     if (room.participants.size === 0) {
       this.rooms.delete(code);
     }
@@ -145,10 +149,12 @@ class RoomStore {
   startScreenShare(socketId) {
     const found = this.findBySocket(socketId);
     if (!found) throw new Error('NOT_IN_ROOM');
-    if (found.room.screenSharingParticipantId && found.room.screenSharingParticipantId !== found.participant.participantId) {
+    if (found.room.screenSharingParticipantIds.includes(found.participant.participantId)) return found;
+    if (found.room.screenSharingParticipantIds.length >= MAX_SCREEN_SHARES_PER_ROOM) {
       throw new Error('SCREEN_BUSY');
     }
-    found.room.screenSharingParticipantId = found.participant.participantId;
+    found.room.screenSharingParticipantIds.push(found.participant.participantId);
+    found.room.screenSharingParticipantId = found.room.screenSharingParticipantIds[0] || null;
     found.participant.screenSharing = true;
     return found;
   }
@@ -156,11 +162,10 @@ class RoomStore {
   stopScreenShare(socketId) {
     const found = this.findBySocket(socketId);
     if (!found) throw new Error('NOT_IN_ROOM');
-    if (found.room.screenSharingParticipantId !== found.participant.participantId) {
+    if (!found.room.screenSharingParticipantIds.includes(found.participant.participantId)) {
       throw new Error('NOT_SCREEN_OWNER');
     }
-    found.room.screenSharingParticipantId = null;
-    found.participant.screenSharing = false;
+    this.#removeScreenShare(found.room, found.participant.participantId);
     return found;
   }
 
@@ -174,7 +179,9 @@ class RoomStore {
         screenSharing: participant.screenSharing,
         connected: Boolean(participant.socketId)
       })),
-      screenSharingParticipantId: room.screenSharingParticipantId
+      screenSharingParticipantIds: [...room.screenSharingParticipantIds],
+      // Mantido para clientes antigos; os novos usam a lista acima.
+      screenSharingParticipantId: room.screenSharingParticipantIds[0] || null
     };
   }
 
@@ -195,6 +202,13 @@ class RoomStore {
     if (timer) clearTimeout(timer);
     this.resumeTimers.delete(participantId);
   }
+
+  #removeScreenShare(room, participantId) {
+    room.screenSharingParticipantIds = room.screenSharingParticipantIds.filter((id) => id !== participantId);
+    const participant = room.participants.get(participantId);
+    if (participant) participant.screenSharing = false;
+    room.screenSharingParticipantId = room.screenSharingParticipantIds[0] || null;
+  }
 }
 
-module.exports = { RECONNECT_GRACE_MS, RoomStore, createRoomCode };
+module.exports = { MAX_SCREEN_SHARES_PER_ROOM, RECONNECT_GRACE_MS, RoomStore, createRoomCode };

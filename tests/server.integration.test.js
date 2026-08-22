@@ -27,7 +27,7 @@ function waitForEvent(socket, event) {
   return new Promise((resolve) => socket.once(event, resolve));
 }
 
-test('cria, entra, bloqueia sexta pessoa e arbitra compartilhamento', async () => {
+test('cria, entra, limita a sexta pessoa e arbitra duas transmissões', async () => {
   await listen(httpServer);
   const url = `http://127.0.0.1:${httpServer.address().port}`;
   const clients = Array.from({ length: 6 }, () => connect(url, { autoConnect: false }));
@@ -48,12 +48,23 @@ test('cria, entra, bloqueia sexta pessoa e arbitra compartilhamento', async () =
 
     const lock = await request(clients[0], 'screen:start-request');
     assert.equal(lock.ok, true);
-    const busy = await request(clients[1], 'screen:start-request');
+    const secondLock = await request(clients[1], 'screen:start-request');
+    assert.equal(secondLock.ok, true);
+    const joinedTwo = await request(clients[2], 'room:join', { roomCode, displayName: 'Pessoa 2' });
+    assert.equal(joinedTwo.ok, true);
+    const busy = await request(clients[2], 'screen:start-request');
     assert.equal(busy.ok, false);
     assert.equal(busy.errorCode, 'SCREEN_BUSY');
+    const viewerJoined = waitForEvent(clients[0], 'screen:viewer-joined');
+    assert.equal((await request(clients[2], 'screen:subscribe-request', { targetParticipantId: created.data.participantId })).ok, true);
+    assert.equal((await viewerJoined).viewerParticipantId, joinedTwo.data.participantId);
+    const viewerLeft = waitForEvent(clients[0], 'screen:viewer-left');
+    assert.equal((await request(clients[2], 'screen:unsubscribe-request', { targetParticipantId: created.data.participantId })).ok, true);
+    assert.equal((await viewerLeft).viewerParticipantId, joinedTwo.data.participantId);
     assert.equal((await request(clients[0], 'screen:stop')).ok, true);
+    assert.equal((await request(clients[1], 'screen:stop')).ok, true);
 
-    for (let index = 2; index < 5; index += 1) {
+    for (let index = 3; index < 5; index += 1) {
       const result = await request(clients[index], 'room:join', { roomCode, displayName: `Pessoa ${index}` });
       assert.equal(result.ok, true);
     }
@@ -70,4 +81,3 @@ test('cria, entra, bloqueia sexta pessoa e arbitra compartilhamento', async () =
     await new Promise((resolve) => httpServer.close(resolve));
   }
 });
-

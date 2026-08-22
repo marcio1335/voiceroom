@@ -29,7 +29,7 @@ test('cria sala, entra, atualiza mute e remove sala vazia', () => {
   assert.equal(store.getRoom(created.room.code), null);
 });
 
-test('garante apenas um compartilhamento ativo', () => {
+test('permite até duas transmissões e bloqueia a terceira', () => {
   const store = new RoomStore();
   const created = store.createRoom('A');
   created.participant.socketId = 'socket-a';
@@ -37,9 +37,15 @@ test('garante apenas um compartilhamento ativo', () => {
   joined.participant.socketId = 'socket-b';
 
   store.startScreenShare('socket-a');
-  assert.throws(() => store.startScreenShare('socket-b'), /SCREEN_BUSY/);
-  store.stopScreenShare('socket-a');
   assert.equal(store.startScreenShare('socket-b').participant.screenSharing, true);
+  assert.throws(() => {
+    const extra = store.joinRoom(created.room.code, 'C');
+    extra.participant.socketId = 'socket-c';
+    store.startScreenShare('socket-c');
+  }, /SCREEN_BUSY/);
+  store.stopScreenShare('socket-a');
+  assert.equal(store.stopScreenShare('socket-b').participant.screenSharing, false);
+  assert.equal(store.startScreenShare('socket-a').participant.screenSharing, true);
 });
 
 test('normaliza nome e código e rejeita entradas inválidas', () => {
@@ -49,4 +55,3 @@ test('normaliza nome e código e rejeita entradas inválidas', () => {
   assert.throws(() => normalizeDisplayName('<script>alert(1)</script>'), /1 e 30/);
   assert.throws(() => normalizeRoomCode('ABC123'), /Código/);
 });
-
