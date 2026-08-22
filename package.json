@@ -34,7 +34,7 @@
   "build": {
     "appId": "com.voiceroom.desktop",
     "productName": "VoiceRoom",
-    "icon": "client/assets/voice-icon.png",
+    "icon": "client/assets/voice-icon.ico",
     "directories": {
       "output": "release"
     },
@@ -51,6 +51,9 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
+      "installerIcon": "client/assets/voice-icon.ico",
+      "uninstallerIcon": "client/assets/voice-icon.ico",
+      "installerHeaderIcon": "client/assets/voice-icon.ico",
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
