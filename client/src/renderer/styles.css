@@ -81,10 +81,12 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 .screen-stage { display: grid; min-height: 490px; flex: 1; place-items: center; overflow: hidden; border: 1px dashed #364356; border-radius: 13px; background: #0a0d12; }
 .screen-stage[data-active="true"] { border-style: solid; }
 .screen-stage video { width: 100%; height: 100%; max-height: 520px; object-fit: contain; }
+.screen-stage video:fullscreen, .screen-stage video:-webkit-full-screen { width: 100vw; height: 100vh; max-height: none; background: #000; object-fit: contain; }
 .empty-stage { display: grid; place-items: center; gap: 8px; padding: 30px; text-align: center; }
 .stage-icon { font-size: 44px; }
 .call-controls { justify-content: center; margin-top: 18px; }
 .call-controls button { min-width: 170px; }
+.call-controls .small { text-align: center; white-space: nowrap; }
 .source-picker { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: #05070bb8; }
 .source-picker[hidden] { display: none; }
 .source-picker-card { width: min(520px, 100%); padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); box-shadow: 0 30px 100px #00000066; }
@@ -99,4 +101,5 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
   .screen-stage { min-height: 360px; }
   .sidebar-spacer { display: none; }
   .call-controls { flex-wrap: wrap; }
+  .call-controls .small { width: 100%; white-space: normal; }
 }

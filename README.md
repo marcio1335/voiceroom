@@ -85,7 +85,7 @@ Na seção **Áudio** da sala, é possível ativar ou desativar separadamente o 
 - A topologia é WebRTC Mesh e suporta oficialmente até 5 participantes.
 - STUN está configurado; TURN ainda não faz parte do MVP, então redes restritivas podem falhar.
 - As salas ficam apenas na memória do processo de sinalização.
-- Compartilhamento de tela transmite vídeo sem áudio do sistema.
+- Compartilhamento de tela pode transmitir áudio do sistema no Windows e possui controle de tela cheia; outros sistemas podem fornecer apenas o vídeo.
 - O instalador ainda não possui assinatura de código; o Windows SmartScreen pode exibir um aviso.
 
 ## Privacidade

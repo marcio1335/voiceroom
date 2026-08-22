@@ -31,7 +31,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'media' || permission === 'display-capture');
+    callback(permission === 'media' || permission === 'display-capture' || permission === 'fullscreen');
   });
 
   ipcMain.handle('app:get-version', () => app.getVersion());
@@ -48,14 +48,18 @@ app.whenReady().then(() => {
     return true;
   });
   if (typeof session.defaultSession.setDisplayMediaRequestHandler === 'function') {
-    session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
       const sources = await desktopCapturer.getSources({
         types: ['screen', 'window'],
         thumbnailSize: { width: 0, height: 0 }
       });
       const selected = sources.find((source) => source.id === selectedDisplaySourceId) || sources.find((source) => source.id.startsWith('screen:')) || sources[0];
       selectedDisplaySourceId = undefined;
-      callback(selected ? { video: selected } : {});
+      const streams = selected ? { video: selected } : {};
+      if (selected && request.audioRequested && process.platform === 'win32') {
+        streams.audio = 'loopback';
+      }
+      callback(streams);
     });
   }
   createWindow();

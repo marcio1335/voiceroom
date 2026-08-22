@@ -153,11 +153,12 @@ class PeerManager {
     nextTrack.enabled = !this.muted;
 
     for (const peer of this.peers.values()) {
-      const sender = peer.connection.getSenders().find((item) => item.track?.kind === 'audio');
+      const sender = peer.audioSender || peer.connection.getSenders().find((item) => item.track?.kind === 'audio' && !peer.screenSenders?.includes(item));
       if (sender) {
         await sender.replaceTrack(nextTrack);
+        peer.audioSender = sender;
       } else {
-        peer.connection.addTrack(nextTrack, nextStream);
+        peer.audioSender = peer.connection.addTrack(nextTrack, nextStream);
         await this.#renegotiate(peer);
       }
     }
@@ -328,14 +329,22 @@ class PeerManager {
       }
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 30 } },
-        audio: false
+        audio: true
       });
       const track = stream.getVideoTracks()[0];
+      if (!track) throw new Error('A captura não forneceu vídeo.');
       track.contentHint = 'detail';
+      for (const audioTrack of stream.getAudioTracks()) {
+        try {
+          audioTrack.contentHint = 'music';
+        } catch {
+          // contentHint pode não existir em versões antigas do Chromium.
+        }
+      }
       track.onended = () => this.stopScreenShare().catch(() => {});
       this.screenStream = stream;
       for (const peer of this.peers.values()) {
-        peer.screenSender = peer.connection.addTrack(track, stream);
+        peer.screenSenders = stream.getTracks().map((screenTrack) => peer.connection.addTrack(screenTrack, stream));
         await this.#renegotiate(peer);
       }
       return stream;
@@ -349,9 +358,9 @@ class PeerManager {
     if (!this.screenStream) return;
     this.screenStream.getTracks().forEach((track) => track.stop());
     for (const peer of this.peers.values()) {
-      if (peer.screenSender) {
-        peer.connection.removeTrack(peer.screenSender);
-        peer.screenSender = null;
+      if (peer.screenSenders?.length) {
+        for (const sender of peer.screenSenders) peer.connection.removeTrack(sender);
+        peer.screenSenders = [];
         await this.#renegotiate(peer);
       }
     }
@@ -386,13 +395,14 @@ class PeerManager {
 
   #createPeer(participant) {
     const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    const peer = { participantId: participant.participantId, connection, pendingCandidates: [], screenSender: null };
+    const peer = { participantId: participant.participantId, connection, pendingCandidates: [], audioSender: null, screenSenders: [] };
     this.peers.set(participant.participantId, peer);
     if (this.audioStream) {
-      for (const track of this.audioStream.getTracks()) connection.addTrack(track, this.audioStream);
+      const audioTrack = this.audioStream.getAudioTracks()[0];
+      if (audioTrack) peer.audioSender = connection.addTrack(audioTrack, this.audioStream);
     }
     if (this.screenStream) {
-      peer.screenSender = connection.addTrack(this.screenStream.getVideoTracks()[0], this.screenStream);
+      peer.screenSenders = this.screenStream.getTracks().map((track) => connection.addTrack(track, this.screenStream));
     }
     connection.onicecandidate = ({ candidate }) => {
       if (candidate) this.socket.sendSignal('peer:ice', participant.participantId, { candidate }).catch(() => {});

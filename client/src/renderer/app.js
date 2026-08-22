@@ -24,6 +24,8 @@ const elements = {
   microphoneLevel: document.querySelector('#microphone-level'),
   microphoneTestStatus: document.querySelector('#microphone-test-status'),
   screen: document.querySelector('#screen-share'),
+  screenFullscreen: document.querySelector('#screen-fullscreen'),
+  screenAudioStatus: document.querySelector('#screen-audio-status'),
   leave: document.querySelector('#leave-room'),
   screenStage: document.querySelector('#screen-stage'),
   sourcePicker: document.querySelector('#source-picker'),
@@ -189,7 +191,10 @@ function enterRoom(result) {
     socket: socketClient,
     selfId,
     onRemoteStream: attachRemoteStream,
-    onPeerState: (participantId, state) => setStatus(`Conexão com ${participantId.slice(0, 6)}: ${state}`),
+    onPeerState: (participantId, state) => {
+      if (['closed', 'failed'].includes(state)) removeParticipantMedia(participantId);
+      setStatus(`Conexão com ${participantId.slice(0, 6)}: ${state}`);
+    },
     onError: (_participantId, code) => showNotice(code === 'P2P_FAILED' ? 'Não foi possível conectar com este participante. Tente trocar de rede ou reiniciar a chamada.' : code)
   });
   peerManager.syncParticipants(currentRoom?.participants || result.data.room.participants).catch((error) => showNotice(error.message));
@@ -203,27 +208,63 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
     video.playsInline = true;
     video.controls = true;
     video.dataset.participantVideo = participantId;
+    video.addEventListener('dblclick', toggleScreenFullscreen);
     elements.screenStage.replaceChildren(video);
   }
   video.muted = muted;
   video.srcObject = stream;
   video.play().catch(() => {});
   elements.screenStage.dataset.active = 'true';
+  elements.screenFullscreen.disabled = false;
+  elements.screenAudioStatus.textContent = stream.getAudioTracks?.().length
+    ? 'Áudio da tela ativo'
+    : 'Vídeo compartilhado sem áudio';
 }
 
 function attachRemoteStream(participantId, track, stream) {
   if (track.kind === 'audio') {
-    let audio = document.querySelector(`[data-participant-audio="${participantId}"]`);
+    const isScreenAudio = Boolean(stream.getVideoTracks?.().length);
+    let audio = document.querySelector(`[data-participant-audio="${participantId}-${track.id}"]`);
     if (!audio) {
       audio = document.createElement('audio');
       audio.autoplay = true;
-      audio.dataset.participantAudio = participantId;
+      audio.dataset.participantAudio = `${participantId}-${track.id}`;
+      audio.dataset.screenAudio = String(isScreenAudio);
+      audio.onended = () => audio.remove();
       document.body.append(audio);
     }
-    audio.srcObject = stream;
+    audio.srcObject = new MediaStream([track]);
+    audio.play().catch(() => {});
     return;
   }
   renderScreenStream(participantId, stream);
+}
+
+async function toggleScreenFullscreen() {
+  const video = document.querySelector('[data-participant-video]');
+  if (!video) return;
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else if (video.requestFullscreen) {
+      await video.requestFullscreen();
+    } else if (video.webkitEnterFullscreen) {
+      video.webkitEnterFullscreen();
+    }
+  } catch {
+    showNotice('Não foi possível abrir a tela cheia.');
+  }
+}
+
+function updateFullscreenButton() {
+  elements.screenFullscreen.textContent = document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia';
+}
+
+function removeParticipantMedia(participantId) {
+  document.querySelectorAll('[data-participant-audio]').forEach((audio) => {
+    if (audio.dataset.participantAudio.startsWith(`${participantId}-`)) audio.remove();
+  });
+  document.querySelector(`[data-participant-video="${participantId}"]`)?.remove();
 }
 
 async function initializeAudio() {
@@ -337,6 +378,8 @@ async function toggleScreen() {
       sharingScreen = false;
       elements.screenStage.replaceChildren();
       elements.screenStage.dataset.active = 'false';
+      elements.screenFullscreen.disabled = true;
+      elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
       renderRoom(currentRoom);
       return;
     }
@@ -391,6 +434,8 @@ async function leaveRoom() {
   elements.room.hidden = true;
   elements.landing.hidden = false;
   elements.screenStage.replaceChildren();
+  elements.screenFullscreen.disabled = true;
+  elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
   setStatus('Pronto para criar ou entrar em uma sala.');
 }
 
@@ -414,6 +459,8 @@ function bindEvents() {
   elements.microphoneGain.addEventListener('input', readAudioSettingsFromControls);
   elements.testMicrophone.addEventListener('click', toggleMicrophoneLoopback);
   elements.screen.addEventListener('click', toggleScreen);
+  elements.screenFullscreen.addEventListener('click', toggleScreenFullscreen);
+  document.addEventListener('fullscreenchange', updateFullscreenButton);
   elements.leave.addEventListener('click', leaveRoom);
 }
 
@@ -437,6 +484,15 @@ function handleSocketEvent(event, payload) {
   if (event === 'screen:stopped') {
     elements.screenStage.replaceChildren();
     elements.screenStage.dataset.active = 'false';
+    elements.screenFullscreen.disabled = true;
+    elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
+    if (payload.participantId) {
+      document.querySelectorAll('[data-participant-audio]').forEach((audio) => {
+        if (audio.dataset.participantAudio.startsWith(`${payload.participantId}-`) && audio.dataset.screenAudio === 'true') {
+          audio.remove();
+        }
+      });
+    }
     if (payload.participantId === selfId) sharingScreen = false;
     if (currentRoom) renderRoom(currentRoom);
     return;
