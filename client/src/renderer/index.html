@@ -14,7 +14,10 @@
           <p class="eyebrow">VOICE ROOM</p>
           <h1>Converse sem complicação.</h1>
         </div>
-        <span id="status" class="status" data-type="info">Conectando ao servidor…</span>
+        <div class="header-status">
+          <span id="status" class="status" data-type="info">Conectando ao servidor…</span>
+          <span id="latency" class="latency" aria-live="polite">Latência: —</span>
+        </div>
       </header>
 
       <div id="notice" class="notice" role="alert" hidden></div>
@@ -40,7 +43,10 @@
               <span class="muted small">Sala</span>
               <strong id="active-room-code">------</strong>
             </div>
-            <button id="copy-room-code" class="icon-button" title="Copiar código" aria-label="Copiar código">Copiar</button>
+            <div class="room-code-actions">
+              <button id="copy-room-code" class="icon-button" title="Copiar código" aria-label="Copiar código">Copiar</button>
+              <button id="copy-invite-link" class="icon-button" title="Copiar link de convite">Link</button>
+            </div>
           </div>
           <div class="divider"></div>
           <div class="section-heading">
@@ -72,6 +78,14 @@
               <input id="process-microphone-test" type="checkbox" />
               <span>Aplicar ao teste de retorno</span>
             </label>
+            <label class="audio-option">
+              <input id="push-to-talk" type="checkbox" />
+              <span>Pressionar para falar</span>
+            </label>
+            <div class="ptt-key-row">
+              <span class="small muted">Tecla do PTT</span>
+              <button id="push-to-talk-key" type="button" class="key-button">Barra de espaço</button>
+            </div>
             <label class="audio-range-label" for="microphone-gain">
               <span>Sensibilidade do microfone</span>
               <output id="microphone-gain-value" for="microphone-gain">100%</output>
@@ -105,6 +119,7 @@
               <button id="screen-share">Compartilhar tela</button>
               <button id="screen-fullscreen" disabled>Tela cheia</button>
             </div>
+            <button id="reconnect-call" class="ghost reconnect-button" hidden>Reconectar chamadas</button>
             <div id="screen-share-list" class="screen-share-list" aria-live="polite"></div>
             <div class="screen-volume-control">
               <label class="audio-range-label" for="screen-volume">
@@ -121,8 +136,13 @@
       <section id="source-picker" class="source-picker" hidden aria-labelledby="source-picker-title">
         <div class="source-picker-card">
           <h2 id="source-picker-title">Escolha o que compartilhar</h2>
-          <p class="muted">Selecione uma janela ou monitor (até 720p/30 fps).</p>
+          <p class="muted">Selecione uma janela ou monitor. A qualidade menor economiza banda.</p>
           <div id="source-list" class="source-list"></div>
+          <label class="small muted" for="screen-quality">Qualidade da transmissão</label>
+          <select id="screen-quality">
+            <option value="720p">720p · 30 fps (melhor imagem)</option>
+            <option value="480p">480p · 30 fps (menos banda)</option>
+          </select>
           <label class="screen-audio-option" for="include-screen-audio">
             <input id="include-screen-audio" type="checkbox">
             <span>Incluir áudio do sistema (todos os aplicativos)</span>

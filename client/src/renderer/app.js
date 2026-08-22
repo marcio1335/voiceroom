@@ -10,6 +10,7 @@ const elements = {
   join: document.querySelector('#join-room'),
   activeCode: document.querySelector('#active-room-code'),
   copy: document.querySelector('#copy-room-code'),
+  copyInvite: document.querySelector('#copy-invite-link'),
   participants: document.querySelector('#participants'),
   microphone: document.querySelector('#microphone'),
   microphoneSelect: document.querySelector('#microphone-select'),
@@ -17,6 +18,8 @@ const elements = {
   noiseSuppression: document.querySelector('#noise-suppression'),
   autoGainControl: document.querySelector('#auto-gain-control'),
   processMicrophoneTest: document.querySelector('#process-microphone-test'),
+  pushToTalk: document.querySelector('#push-to-talk'),
+  pushToTalkKey: document.querySelector('#push-to-talk-key'),
   microphoneGain: document.querySelector('#microphone-gain'),
   microphoneGainValue: document.querySelector('#microphone-gain-value'),
   audioProcessingStatus: document.querySelector('#audio-processing-status'),
@@ -27,6 +30,7 @@ const elements = {
   screenVolume: document.querySelector('#screen-volume'),
   screenVolumeValue: document.querySelector('#screen-volume-value'),
   screenFullscreen: document.querySelector('#screen-fullscreen'),
+  reconnect: document.querySelector('#reconnect-call'),
   screenAudioStatus: document.querySelector('#screen-audio-status'),
   leave: document.querySelector('#leave-room'),
   screenStage: document.querySelector('#screen-stage'),
@@ -34,9 +38,11 @@ const elements = {
   screenShareList: document.querySelector('#screen-share-list'),
   sourcePicker: document.querySelector('#source-picker'),
   sourceList: document.querySelector('#source-list'),
+  screenQuality: document.querySelector('#screen-quality'),
   includeScreenAudio: document.querySelector('#include-screen-audio'),
   cancelSource: document.querySelector('#cancel-source'),
   status: document.querySelector('#status'),
+  latency: document.querySelector('#latency'),
   notice: document.querySelector('#notice')
 };
 
@@ -51,7 +57,19 @@ let screenVolumeLevel = 1;
 let selectedScreenParticipantId = null;
 let watchingScreenParticipantId = null;
 let screenWatchActionInProgress = false;
+let latencyTimer = null;
+let reconnectInProgress = false;
+let capturingPttKey = false;
+let pttPressed = false;
+let pttInitialization = null;
+let screenQuality = '720p';
 const screenAudioSourceIds = new Set();
+const speakingParticipants = new Set();
+const speakingMonitors = new Map();
+let speakingAudioContext = null;
+const PARTICIPANT_VOLUME_STORAGE_KEY = 'voiceroom.participantVolumes';
+const DISPLAY_NAME_STORAGE_KEY = 'voiceroom.displayName';
+const SCREEN_QUALITY_STORAGE_KEY = 'voiceroom.screenQuality';
 
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
 const DEFAULT_AUDIO_SETTINGS = Object.freeze({
@@ -59,7 +77,9 @@ const DEFAULT_AUDIO_SETTINGS = Object.freeze({
   noiseSuppression: true,
   autoGainControl: true,
   processMicrophoneTest: false,
-  inputGain: 1
+  inputGain: 1,
+  pushToTalk: false,
+  pushToTalkKey: 'Space'
 });
 
 const AUDIO_PROCESSING_LABELS = Object.freeze({
@@ -82,7 +102,11 @@ function loadAudioSettings() {
       noiseSuppression: saved.noiseSuppression !== false,
       autoGainControl: saved.autoGainControl !== false,
       processMicrophoneTest: saved.processMicrophoneTest === true,
-      inputGain: clampInputGain(saved.inputGain)
+      inputGain: clampInputGain(saved.inputGain),
+      pushToTalk: saved.pushToTalk === true,
+      pushToTalkKey: typeof saved.pushToTalkKey === 'string' && saved.pushToTalkKey.length <= 40
+        ? saved.pushToTalkKey
+        : DEFAULT_AUDIO_SETTINGS.pushToTalkKey
     };
   } catch {
     return { ...DEFAULT_AUDIO_SETTINGS };
@@ -104,6 +128,8 @@ function syncAudioSettingsControls() {
   elements.noiseSuppression.checked = audioSettings.noiseSuppression;
   elements.autoGainControl.checked = audioSettings.autoGainControl;
   elements.processMicrophoneTest.checked = audioSettings.processMicrophoneTest;
+  elements.pushToTalk.checked = audioSettings.pushToTalk;
+  elements.pushToTalkKey.textContent = formatPttKey(audioSettings.pushToTalkKey);
   elements.microphoneGain.value = String(Math.round(audioSettings.inputGain * 100));
   elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
 }
@@ -114,7 +140,9 @@ function collectAudioSettingsFromControls() {
     noiseSuppression: elements.noiseSuppression.checked,
     autoGainControl: elements.autoGainControl.checked,
     processMicrophoneTest: elements.processMicrophoneTest.checked,
-    inputGain: clampInputGain(Number(elements.microphoneGain.value) / 100)
+    inputGain: clampInputGain(Number(elements.microphoneGain.value) / 100),
+    pushToTalk: elements.pushToTalk.checked,
+    pushToTalkKey: audioSettings.pushToTalkKey
   };
 }
 
@@ -123,6 +151,59 @@ function readAudioSettingsFromControls() {
   elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
   persistAudioSettings();
   peerManager?.setInputGain(audioSettings.inputGain);
+}
+
+function formatPttKey(code) {
+  if (!code) return 'Barra de espaço';
+  if (code === 'Space') return 'Barra de espaço';
+  if (code === 'Escape') return 'Esc';
+  if (code.startsWith('Key')) return code.slice(3).toUpperCase();
+  if (code.startsWith('Digit')) return code.slice(5);
+  return code.replace(/^Arrow/, 'Seta ');
+}
+
+function loadParticipantVolumes() {
+  try {
+    const value = JSON.parse(localStorage.getItem(PARTICIPANT_VOLUME_STORAGE_KEY) || '{}');
+    return value && typeof value === 'object' ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+let participantVolumes = loadParticipantVolumes();
+
+function getParticipantVolume(participantId) {
+  const value = Number(participantVolumes[participantId]);
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+}
+
+function setParticipantVolume(participantId, value) {
+  const numericValue = Number(value);
+  if (!participantId || !Number.isFinite(numericValue)) return;
+  participantVolumes[participantId] = Math.min(1, Math.max(0, numericValue));
+  try { localStorage.setItem(PARTICIPANT_VOLUME_STORAGE_KEY, JSON.stringify(participantVolumes)); } catch { /* armazenamento opcional */ }
+  document.querySelectorAll('audio[data-participant-id]').forEach((audio) => {
+    if (audio.dataset.participantId === participantId && audio.dataset.screenAudio !== 'true') {
+      audio.volume = getParticipantVolume(participantId);
+    }
+  });
+}
+
+function setScreenQuality(value) {
+  screenQuality = value === '480p' ? '480p' : '720p';
+  if (elements.screenQuality) elements.screenQuality.value = screenQuality;
+  try { localStorage.setItem(SCREEN_QUALITY_STORAGE_KEY, screenQuality); } catch { /* armazenamento opcional */ }
+}
+
+function loadLocalPreferences() {
+  try {
+    const savedName = localStorage.getItem(DISPLAY_NAME_STORAGE_KEY);
+    if (savedName) elements.name.value = savedName;
+    const savedQuality = localStorage.getItem(SCREEN_QUALITY_STORAGE_KEY);
+    if (savedQuality) screenQuality = savedQuality === '480p' ? '480p' : '720p';
+  } catch { /* armazenamento opcional */ }
+  setScreenQuality(screenQuality);
 }
 
 function renderAudioProcessingStatus(settings = {}) {
@@ -197,6 +278,56 @@ function setStatus(message, type = 'info') {
   elements.status.dataset.type = type;
 }
 
+function updateLatencyLabel(value) {
+  if (!elements.latency) return;
+  if (!Number.isFinite(value)) {
+    elements.latency.textContent = 'Latência: —';
+    elements.latency.dataset.type = 'info';
+    return;
+  }
+  elements.latency.textContent = `Latência: ${value} ms`;
+  elements.latency.dataset.type = value > 300 ? 'error' : value > 180 ? 'warning' : 'success';
+}
+
+async function updateLatency() {
+  if (!roomCode || !socketClient) return;
+  const mediaLatency = await peerManager?.getLatency?.();
+  const latency = Number.isFinite(mediaLatency) ? mediaLatency : await socketClient.measureLatency();
+  updateLatencyLabel(latency);
+}
+
+function startLatencyMonitoring() {
+  window.clearInterval(latencyTimer);
+  updateLatency();
+  latencyTimer = window.setInterval(updateLatency, 5_000);
+}
+
+function stopLatencyMonitoring() {
+  window.clearInterval(latencyTimer);
+  latencyTimer = null;
+  updateLatencyLabel(null);
+}
+
+async function reconnectCalls() {
+  if (!peerManager || reconnectInProgress) return;
+  reconnectInProgress = true;
+  elements.reconnect.disabled = true;
+  elements.reconnect.textContent = 'Reconectando…';
+  setStatus('Reconectando chamadas…', 'warning');
+  try {
+    await peerManager.reconnectAll();
+    showNotice('Nova tentativa de conexão iniciada.', 'success');
+  } catch {
+    showNotice('Não foi possível iniciar a reconexão.');
+  } finally {
+    window.setTimeout(() => {
+      reconnectInProgress = false;
+      elements.reconnect.disabled = false;
+      elements.reconnect.textContent = 'Reconectar chamadas';
+    }, 1_500);
+  }
+}
+
 function showNotice(message, type = 'error') {
   elements.notice.textContent = message;
   elements.notice.dataset.type = type;
@@ -224,16 +355,109 @@ function renderParticipants() {
   for (const participant of currentRoom.participants) {
     const item = document.createElement('li');
     item.className = 'participant';
-    const state = participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
+    item.dataset.participantRow = participant.participantId;
+    item.dataset.speaking = String(speakingParticipants.has(participant.participantId));
+    const state = speakingParticipants.has(participant.participantId)
+      ? '🔊'
+      : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
     const stateElement = document.createElement('span');
     stateElement.className = 'participant-state';
     stateElement.setAttribute('aria-hidden', 'true');
     stateElement.textContent = state;
     const nameElement = document.createElement('span');
     nameElement.textContent = participant.displayName + (participant.participantId === selfId ? ' (você)' : '');
-    item.append(stateElement, nameElement);
+    const identity = document.createElement('span');
+    identity.className = 'participant-identity';
+    identity.append(stateElement, nameElement);
+    item.append(identity);
+    if (participant.participantId !== selfId && participant.connected) {
+      const volume = document.createElement('input');
+      volume.type = 'range';
+      volume.min = '0';
+      volume.max = '100';
+      volume.step = '1';
+      volume.value = String(Math.round(getParticipantVolume(participant.participantId) * 100));
+      volume.className = 'participant-volume';
+      volume.title = `Volume de ${participant.displayName}`;
+      volume.setAttribute('aria-label', `Volume de ${participant.displayName}`);
+      volume.addEventListener('input', () => setParticipantVolume(participant.participantId, Number(volume.value) / 100));
+      item.append(volume);
+    }
     elements.participants.append(item);
   }
+}
+
+function setSpeakingState(participantId, speaking) {
+  if (speaking) speakingParticipants.add(participantId);
+  else speakingParticipants.delete(participantId);
+  const item = [...document.querySelectorAll('[data-participant-row]')]
+    .find((candidate) => candidate.dataset.participantRow === participantId);
+  if (!item) return;
+  item.dataset.speaking = String(speaking);
+  const state = item.querySelector('.participant-state');
+  const participant = currentRoom?.participants.find((entry) => entry.participantId === participantId);
+  if (state && participant) {
+    state.textContent = speaking ? '🔊' : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
+  }
+}
+
+function stopSpeakingMonitor(participantId) {
+  const monitor = speakingMonitors.get(participantId);
+  if (!monitor) return;
+  monitor.active = false;
+  if (monitor.animationFrame) cancelAnimationFrame(monitor.animationFrame);
+  try { monitor.source.disconnect(); } catch { /* já desconectado */ }
+  try { monitor.analyser.disconnect(); } catch { /* já desconectado */ }
+  speakingMonitors.delete(participantId);
+  setSpeakingState(participantId, false);
+}
+
+function startSpeakingMonitor(participantId, track) {
+  if (!track || track.kind !== 'audio') return;
+  stopSpeakingMonitor(participantId);
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    speakingAudioContext ||= new AudioContextClass({ latencyHint: 'interactive' });
+    speakingAudioContext.resume().catch(() => {});
+    const stream = new MediaStream([track]);
+    const source = speakingAudioContext.createMediaStreamSource(stream);
+    const analyser = speakingAudioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.72;
+    source.connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    const monitor = { source, analyser, stream, samples, active: true, speaking: false, animationFrame: null };
+    speakingMonitors.set(participantId, monitor);
+    const update = () => {
+      if (!monitor.active) return;
+      analyser.getByteTimeDomainData(samples);
+      let sum = 0;
+      for (const sample of samples) {
+        const normalized = (sample - 128) / 128;
+        sum += normalized * normalized;
+      }
+      const rms = Math.sqrt(sum / samples.length);
+      const nextSpeaking = monitor.speaking ? rms > 0.025 : rms > 0.04;
+      if (nextSpeaking !== monitor.speaking) {
+        monitor.speaking = nextSpeaking;
+        setSpeakingState(participantId, nextSpeaking);
+      }
+      monitor.animationFrame = requestAnimationFrame(update);
+    };
+    update();
+  } catch {
+    // O indicador é complementar e não pode impedir a reprodução da chamada.
+  }
+}
+
+function stopAllSpeakingMonitors() {
+  for (const participantId of speakingMonitors.keys()) stopSpeakingMonitor(participantId);
+  speakingParticipants.clear();
+  if (speakingAudioContext && speakingAudioContext.state !== 'closed') {
+    speakingAudioContext.close().catch(() => {});
+  }
+  speakingAudioContext = null;
 }
 
 function renderRoom(room) {
@@ -298,11 +522,27 @@ function enterRoom(result) {
     onRemoteStream: attachRemoteStream,
     onPeerState: (participantId, state) => {
       if (['closed', 'failed'].includes(state)) removeParticipantMedia(participantId);
-      setStatus(`Conexão com ${participantId.slice(0, 6)}: ${state}`);
+      if (state === 'failed' || state === 'disconnected') {
+        elements.reconnect.hidden = false;
+        setStatus(state === 'failed'
+          ? `Conexão com ${participantId.slice(0, 6)} falhou.`
+          : `Conexão com ${participantId.slice(0, 6)} está instável.`, 'warning');
+      } else if (['connected', 'completed'].includes(state)) {
+        elements.reconnect.hidden = true;
+        setStatus('Chamada conectada.', 'success');
+      } else if (state !== 'closed') {
+        setStatus(`Conexão com ${participantId.slice(0, 6)}: ${state}`);
+      }
     },
-    onError: (_participantId, code) => showNotice(code === 'P2P_FAILED' ? 'Não foi possível conectar com este participante. Tente trocar de rede ou reiniciar a chamada.' : code)
+    onError: (_participantId, code) => {
+      if (code === 'P2P_FAILED') {
+        elements.reconnect.hidden = false;
+        showNotice('Não foi possível conectar com este participante. Tente reconectar; se persistir, a rede pode exigir TURN/VPN.');
+      } else showNotice(code);
+    }
   });
   peerManager.syncParticipants(currentRoom?.participants || result.data.room.participants).catch((error) => showNotice(error.message));
+  startLatencyMonitoring();
 }
 
 function renderScreenStream(participantId, stream, { muted = false } = {}) {
@@ -356,8 +596,12 @@ function attachRemoteStream(participantId, track, stream) {
       audio = document.createElement('audio');
       audio.autoplay = true;
       audio.dataset.participantAudio = `${participantId}-${track.id}`;
+      audio.dataset.participantId = participantId;
       audio.dataset.screenAudio = String(isScreenAudio);
-      audio.onended = () => audio.remove();
+      audio.onended = () => {
+        audio.remove();
+        if (!isScreenAudio) stopSpeakingMonitor(participantId);
+      };
       document.body.append(audio);
     }
     audio.srcObject = new MediaStream([track]);
@@ -368,6 +612,9 @@ function attachRemoteStream(participantId, track, stream) {
       audio.volume = screenVolumeLevel;
       audio.muted = screenVolumeLevel === 0;
       updateScreenVolume();
+    } else {
+      audio.volume = getParticipantVolume(participantId);
+      startSpeakingMonitor(participantId, track);
     }
     audio.play().catch(() => {});
     return;
@@ -500,14 +747,21 @@ function removeParticipantMedia(participantId) {
     if (audio.dataset.participantAudio.startsWith(`${participantId}-`)) audio.remove();
   });
   removeScreenStream(participantId);
+  stopSpeakingMonitor(participantId);
 }
 
 async function initializeAudio() {
   try {
+    peerManager.setMuted(audioSettings.pushToTalk ? true : muted);
     await peerManager.startAudio(elements.microphoneSelect.value || undefined, audioSettings);
     elements.microphone.disabled = false;
+    muted = audioSettings.pushToTalk ? true : Boolean(peerManager.muted);
+    peerManager.setMuted(muted);
+    if (audioSettings.pushToTalk) await socketClient.setMuted(true);
+    startSpeakingMonitor(selfId, peerManager.getAudioTrack());
+    elements.microphone.textContent = muted ? 'Ativar microfone' : 'Mutar microfone';
     renderAudioProcessingStatus(peerManager.getAudioProcessingSettings());
-    setStatus('Microfone conectado.', 'success');
+    setStatus(audioSettings.pushToTalk ? 'Microfone pronto. Segure a tecla do PTT para falar.' : 'Microfone conectado.', 'success');
   } catch (error) {
     showNotice('Não foi possível acessar seu microfone. Verifique as permissões do Windows.');
     setStatus(error.message, 'error');
@@ -568,6 +822,7 @@ async function createOrJoin(action) {
     elements.name.focus();
     return;
   }
+  try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName); } catch { /* armazenamento opcional */ }
   elements.create.disabled = true;
   elements.join.disabled = true;
   setStatus('Conectando ao servidor…');
@@ -586,11 +841,25 @@ async function createOrJoin(action) {
 }
 
 async function toggleMicrophone() {
+  if (audioSettings.pushToTalk) {
+    if (!peerManager.getAudioTrack()) await initializeAudio();
+    showNotice(`PTT ativo: segure ${formatPttKey(audioSettings.pushToTalkKey)} para falar.`, 'success');
+    return;
+  }
   if (!peerManager.getAudioTrack()) {
     await initializeAudio();
     return;
   }
   muted = !muted;
+  peerManager.setMuted(muted);
+  await socketClient.setMuted(muted);
+  elements.microphone.textContent = muted ? 'Ativar microfone' : 'Mutar microfone';
+  renderRoom(currentRoom);
+}
+
+async function setMicrophoneMuted(nextMuted) {
+  if (!peerManager?.getAudioTrack()) return;
+  muted = Boolean(nextMuted);
   peerManager.setMuted(muted);
   await socketClient.setMuted(muted);
   elements.microphone.textContent = muted ? 'Ativar microfone' : 'Mutar microfone';
@@ -608,7 +877,8 @@ async function toggleScreen() {
     }
     const selection = await chooseScreenSource();
     const stream = await peerManager.startScreenShare(selection.sourceId, {
-      includeSystemAudio: selection.includeSystemAudio
+      includeSystemAudio: selection.includeSystemAudio,
+      quality: selection.quality
     });
     sharingScreen = true;
     renderScreenStream(selfId, stream, { muted: true });
@@ -626,6 +896,7 @@ async function chooseScreenSource() {
   if (!sources.length) throw new Error('Nenhuma janela ou tela disponível para compartilhar.');
   elements.sourceList.replaceChildren();
   elements.includeScreenAudio.checked = false;
+  elements.screenQuality.value = screenQuality;
   return new Promise((resolve, reject) => {
     const close = () => {
       elements.sourcePicker.hidden = true;
@@ -645,7 +916,8 @@ async function chooseScreenSource() {
         close();
         resolve({
           sourceId: source.id,
-          includeSystemAudio: elements.includeScreenAudio.checked
+          includeSystemAudio: elements.includeScreenAudio.checked,
+          quality: elements.screenQuality.value
         });
       }, { once: true });
       elements.sourceList.append(button);
@@ -657,6 +929,8 @@ async function chooseScreenSource() {
 async function leaveRoom() {
   try { await socketClient.leaveRoom(); } catch { /* conexão já pode ter caído */ }
   peerManager?.close();
+  stopAllSpeakingMonitors();
+  stopLatencyMonitoring();
   peerManager = null;
   selfId = null;
   roomCode = null;
@@ -675,7 +949,91 @@ async function leaveRoom() {
   elements.screenVolume.disabled = true;
   elements.screenFullscreen.disabled = true;
   elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
+  elements.reconnect.hidden = true;
+  elements.reconnect.disabled = false;
+  elements.reconnect.textContent = 'Reconectar chamadas';
+  muted = false;
   setStatus('Pronto para criar ou entrar em uma sala.');
+}
+
+function isEditableTarget(target) {
+  return target instanceof HTMLElement && (
+    target.matches('input, textarea, select') || target.isContentEditable
+  );
+}
+
+function handlePttKeyCapture(event) {
+  if (!capturingPttKey) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.code === 'Escape') {
+    capturingPttKey = false;
+    elements.pushToTalkKey.textContent = formatPttKey(audioSettings.pushToTalkKey);
+    return true;
+  }
+  if (!event.code || event.code === 'Unidentified') return true;
+  audioSettings.pushToTalkKey = event.code;
+  capturingPttKey = false;
+  elements.pushToTalkKey.textContent = formatPttKey(event.code);
+  persistAudioSettings();
+  showNotice(`Tecla do PTT definida: ${formatPttKey(event.code)}.`, 'success');
+  return true;
+}
+
+function handlePttKeyDown(event) {
+  if (handlePttKeyCapture(event)) return;
+  if (!audioSettings.pushToTalk || event.code !== audioSettings.pushToTalkKey || event.repeat || isEditableTarget(event.target)) return;
+  event.preventDefault();
+  pttPressed = true;
+  if (!peerManager?.getAudioTrack()) {
+    pttInitialization ||= initializeAudio();
+  }
+  Promise.resolve(pttInitialization).then(() => {
+    pttInitialization = null;
+    if (pttPressed && audioSettings.pushToTalk) setMicrophoneMuted(false).catch(() => {});
+  });
+}
+
+function handlePttKeyUp(event) {
+  if (!audioSettings.pushToTalk || event.code !== audioSettings.pushToTalkKey) return;
+  event.preventDefault();
+  pttPressed = false;
+  setMicrophoneMuted(true).catch(() => {});
+}
+
+function releasePtt() {
+  if (!pttPressed) return;
+  pttPressed = false;
+  setMicrophoneMuted(true).catch(() => {});
+}
+
+function getInviteLink() {
+  return roomCode ? `voiceroom://join/${encodeURIComponent(roomCode)}` : '';
+}
+
+async function copyInviteLink() {
+  const inviteLink = getInviteLink();
+  if (!inviteLink) return;
+  try {
+    await navigator.clipboard.writeText(inviteLink);
+    showNotice('Link de convite copiado. Ao clicar nele, o VoiceRoom abre com o código preenchido.', 'success');
+  } catch {
+    showNotice(`Copie este link: ${inviteLink}`);
+  }
+}
+
+function handleDeepLink(url) {
+  if (typeof url !== 'string' || !url.toLowerCase().startsWith('voiceroom://')) return;
+  const match = url.match(/^voiceroom:\/\/join\/([A-Za-z0-9]+)$/i);
+  if (!match) return;
+  const code = decodeURIComponent(match[1]).toUpperCase();
+  elements.roomCode.value = code;
+  if (elements.landing.hidden) {
+    showNotice(`Código ${code} recebido pelo link. Saia da sala atual para entrar nele.`);
+  } else {
+    elements.roomCode.focus();
+    showNotice(`Código ${code} preenchido pelo link.`, 'success');
+  }
 }
 
 function bindEvents() {
@@ -686,6 +1044,7 @@ function bindEvents() {
     await navigator.clipboard.writeText(roomCode);
     showNotice('Código copiado.', 'success');
   });
+  elements.copyInvite.addEventListener('click', copyInviteLink);
   elements.microphone.addEventListener('click', toggleMicrophone);
   elements.microphoneSelect.addEventListener('change', initializeAudio);
   elements.echoCancellation.addEventListener('change', changeAudioProcessing);
@@ -695,16 +1054,44 @@ function bindEvents() {
     readAudioSettingsFromControls();
     await restartMicrophoneLoopback();
   });
+  elements.pushToTalk.addEventListener('change', async () => {
+    audioSettings = collectAudioSettingsFromControls();
+    persistAudioSettings();
+    if (audioSettings.pushToTalk && peerManager?.getAudioTrack()) await setMicrophoneMuted(true);
+    showNotice(audioSettings.pushToTalk
+      ? `PTT ativo: segure ${formatPttKey(audioSettings.pushToTalkKey)} para falar.`
+      : 'PTT desativado.', 'success');
+  });
+  elements.pushToTalkKey.addEventListener('click', () => {
+    capturingPttKey = true;
+    elements.pushToTalkKey.textContent = 'Pressione uma tecla…';
+  });
   elements.microphoneGain.addEventListener('input', readAudioSettingsFromControls);
   elements.testMicrophone.addEventListener('click', toggleMicrophoneLoopback);
   elements.screen.addEventListener('click', toggleScreen);
+  elements.reconnect.addEventListener('click', reconnectCalls);
   elements.screenVolume.addEventListener('input', () => setScreenVolume(elements.screenVolume.value));
+  elements.screenQuality.addEventListener('change', () => setScreenQuality(elements.screenQuality.value));
   elements.screenFullscreen.addEventListener('click', toggleScreenFullscreen);
   document.addEventListener('fullscreenchange', updateFullscreenButton);
   elements.leave.addEventListener('click', leaveRoom);
+  elements.name.addEventListener('input', () => {
+    try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, elements.name.value); } catch { /* armazenamento opcional */ }
+  });
+  document.addEventListener('keydown', handlePttKeyDown);
+  document.addEventListener('keyup', handlePttKeyUp);
+  window.addEventListener('blur', releasePtt);
+  window.voiceRoom?.onDeepLink?.(handleDeepLink);
 }
 
 function handleSocketEvent(event, payload) {
+  if (event === 'connect') {
+    if (roomCode) {
+      setStatus('Servidor conectado. Recuperando chamada…', 'success');
+      updateLatency();
+    }
+    return;
+  }
   if (event === 'room:state') {
     renderRoom(payload.room);
     return;
@@ -752,6 +1139,7 @@ function handleSocketEvent(event, payload) {
 }
 
 function bootstrap() {
+  loadLocalPreferences();
   syncAudioSettingsControls();
   bindEvents();
   socketClient = new SocketClient({ onEvent: handleSocketEvent });

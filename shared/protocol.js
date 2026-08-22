@@ -5,6 +5,7 @@ const EVENTS = Object.freeze({
   ROOM_JOIN: 'room:join',
   ROOM_RESUME: 'room:resume',
   ROOM_LEAVE: 'room:leave',
+  ROOM_PING: 'room:ping',
   ROOM_STATE: 'room:state',
   PEER_OFFER: 'peer:offer',
   PEER_ANSWER: 'peer:answer',

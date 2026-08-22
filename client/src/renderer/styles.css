@@ -27,6 +27,7 @@ input, select { width: 100%; border: 1px solid var(--border); border-radius: 9px
 input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px #65d7a21d; }
 .shell { width: min(1120px, calc(100% - 48px)); margin: 0 auto; padding: 42px 0; }
 .app-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+.header-status { display: grid; justify-items: end; gap: 5px; text-align: right; }
 .eyebrow { margin: 0 0 8px; color: var(--primary); font-size: 12px; font-weight: 800; letter-spacing: .16em; }
 h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 0; font-size: clamp(28px, 4vw, 44px); letter-spacing: -.04em; }
@@ -37,6 +38,10 @@ h2 { margin-bottom: 8px; font-size: 18px; }
 .status[data-type="success"] { color: var(--primary); }
 .status[data-type="error"] { color: var(--danger); }
 .status[data-type="warning"] { color: #f3c66b; }
+.latency { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.latency[data-type="success"] { color: var(--primary); }
+.latency[data-type="warning"] { color: #f3c66b; }
+.latency[data-type="error"] { color: var(--danger); }
 .card { border: 1px solid var(--border); border-radius: 18px; background: color-mix(in srgb, var(--card) 92%, transparent); box-shadow: 0 20px 70px #00000020; }
 .landing-card { width: min(600px, 100%); margin: 70px auto 0; padding: 30px; }
 .landing-card > p { margin-bottom: 26px; }
@@ -51,14 +56,19 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 .room-layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 18px; align-items: stretch; }
 .room-sidebar { display: flex; min-height: 590px; flex-direction: column; padding: 20px; }
 .room-code-row, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.room-code-actions { display: flex; gap: 6px; }
 .room-code-row strong { display: block; margin-top: 4px; color: var(--primary); font-size: 25px; letter-spacing: .18em; }
 .icon-button { padding: 8px 10px; font-size: 12px; }
 .divider { height: 1px; margin: 24px 0; background: var(--border); }
 .section-heading h2 { margin: 0; }
 .pill { border: 1px solid var(--border); border-radius: 99px; padding: 3px 8px; color: var(--muted); font-size: 11px; }
 .participants { display: grid; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none; }
-.participant { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 9px; background: #111720; color: #e6edf5; }
+.participant { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px 10px; border: 1px solid transparent; border-radius: 9px; background: #111720; color: #e6edf5; transition: border-color .15s, background .15s; }
+.participant[data-speaking="true"] { border-color: var(--primary); background: #153426; }
+.participant-identity { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+.participant-identity > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .participant-state { width: 20px; text-align: center; color: var(--primary); }
+.participant-volume { width: 64px; height: 16px; margin: 0; padding: 0; accent-color: var(--primary); background: transparent; }
 .sidebar-spacer { flex: 1; min-height: 20px; }
 .room-sidebar select { margin-bottom: 14px; }
 .audio-settings { display: grid; gap: 9px; margin-bottom: 14px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #111720; }
@@ -66,6 +76,8 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 .audio-settings .section-heading h2 { font-size: 14px; }
 .audio-option { display: flex; align-items: center; gap: 8px; margin: 0; color: #d7dfeb; font-size: 12px; font-weight: 500; }
 .audio-option input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--primary); }
+.ptt-key-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.key-button { min-width: 112px; padding: 6px 8px; font-size: 11px; }
 .audio-range-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 3px 0 0; font-size: 12px; }
 .audio-range-label output { color: var(--primary); font-variant-numeric: tabular-nums; }
 .audio-settings input[type="range"] { width: 100%; height: 18px; margin: 0; padding: 0; accent-color: var(--primary); background: transparent; }
@@ -97,6 +109,7 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 .call-action-row button { min-width: 0; width: 100%; }
 .screen-share-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .screen-share-list:empty { display: none; }
+.reconnect-button { border-color: #755e2f; color: #f3c66b; }
 .screen-share-hint { grid-column: 1 / -1; }
 .screen-share-option { width: 100%; border-color: #41614f; color: #d9ffeb; background: #153426; }
 .screen-share-option[aria-pressed="true"] { border-color: var(--primary); background: #1d4b37; }
@@ -108,6 +121,7 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 .source-picker[hidden] { display: none; }
 .source-picker-card { width: min(520px, 100%); padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); box-shadow: 0 30px 100px #00000066; }
 .source-list { display: grid; max-height: 300px; gap: 8px; margin: 18px 0; overflow: auto; }
+.source-picker-card select { margin: 6px 0 14px; }
 .screen-audio-option { display: flex; align-items: center; gap: 8px; margin-top: 16px; cursor: pointer; }
 .screen-audio-option input { width: auto; margin: 0; accent-color: var(--accent); }
 .screen-audio-note { margin: 6px 0 16px; line-height: 1.4; }
@@ -115,7 +129,7 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 @media (max-width: 760px) {
   .shell { width: min(100% - 24px, 600px); padding-top: 24px; }
   .app-header { display: block; }
-  .status { display: block; margin-top: 12px; }
+  .header-status { justify-items: start; margin-top: 12px; text-align: left; }
   .landing-actions, .room-layout { grid-template-columns: 1fr; }
   .room-sidebar, .call-card { min-height: auto; }
   .screen-stage { min-height: 360px; grid-template-columns: 1fr; }

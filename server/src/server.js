@@ -119,6 +119,11 @@ function bindSocket(io, socket) {
     return { participantId: resumed.participant.participantId, room: rooms.serializeRoom(resumed.room) };
   }));
 
+  socket.on(EVENTS.ROOM_PING, withGuard(socket, EVENTS.ROOM_PING, (payload) => {
+    assertPayload(payload);
+    return { serverTimestamp: Date.now() };
+  }));
+
   socket.on(EVENTS.ROOM_LEAVE, withGuard(socket, EVENTS.ROOM_LEAVE, (payload) => {
     assertPayload(payload);
     const found = getBoundParticipant(socket);

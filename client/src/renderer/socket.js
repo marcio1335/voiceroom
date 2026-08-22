@@ -101,6 +101,14 @@ class SocketClient {
     return this.request('screen:unsubscribe-request', { targetParticipantId: ownerParticipantId });
   }
 
+  async measureLatency() {
+    if (!this.socket.connected) return null;
+    const startedAt = performance.now();
+    const response = await this.request('room:ping', {});
+    if (!response?.ok) return null;
+    return Math.max(0, Math.round(performance.now() - startedAt));
+  }
+
   close() {
     this.socket.close();
   }

@@ -7,6 +7,11 @@ const DEFAULT_AUDIO_SETTINGS = Object.freeze({
   inputGain: 1
 });
 
+const SCREEN_QUALITIES = Object.freeze({
+  '480p': Object.freeze({ width: 854, height: 480, frameRate: 30 }),
+  '720p': Object.freeze({ width: 1280, height: 720, frameRate: 30 })
+});
+
 function clampInputGain(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return DEFAULT_AUDIO_SETTINGS.inputGain;
@@ -310,9 +315,9 @@ class PeerManager {
   }
 
   setMuted(muted) {
+    this.muted = Boolean(muted);
     const track = this.getAudioTrack();
     if (!track) return false;
-    this.muted = Boolean(muted);
     track.enabled = !muted;
     return muted;
   }
@@ -329,6 +334,30 @@ class PeerManager {
         await this.#renegotiate(peer);
       }
     }
+  }
+
+  async reconnectAll() {
+    const participantIds = [...this.peers.keys()];
+    for (const participantId of participantIds) this.removePeer(participantId);
+    await this.syncParticipants(participantIds.map((participantId) => ({ participantId })));
+  }
+
+  async getLatency() {
+    const values = [];
+    for (const peer of this.peers.values()) {
+      if (!peer.connection.getStats) continue;
+      try {
+        const report = await peer.connection.getStats();
+        for (const stat of report.values()) {
+          if (stat.type !== 'candidate-pair' || stat.state !== 'succeeded') continue;
+          if (stat.nominated === false && stat.selected !== true) continue;
+          if (Number.isFinite(stat.currentRoundTripTime)) values.push(stat.currentRoundTripTime * 1000);
+        }
+      } catch {
+        // A conexão pode estar sendo substituída enquanto as estatísticas são lidas.
+      }
+    }
+    return values.length ? Math.round(Math.min(...values)) : null;
   }
 
   async handleOffer(fromParticipantId, description) {
@@ -384,15 +413,20 @@ class PeerManager {
     await peer.connection.addIceCandidate(candidate);
   }
 
-  async startScreenShare(sourceId, { includeSystemAudio = false } = {}) {
+  async startScreenShare(sourceId, { includeSystemAudio = false, quality = '720p' } = {}) {
     const lock = await this.socket.startScreenShare();
     if (!lock?.ok) throw new Error(lock?.message || 'Não foi possível iniciar o compartilhamento.');
     try {
       if (sourceId && window.voiceRoom?.selectScreenSource) {
         await window.voiceRoom.selectScreenSource(sourceId);
       }
+      const selectedQuality = SCREEN_QUALITIES[quality] || SCREEN_QUALITIES['720p'];
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 30 } },
+        video: {
+          width: { max: selectedQuality.width },
+          height: { max: selectedQuality.height },
+          frameRate: { max: selectedQuality.frameRate }
+        },
         // Electron's loopback audio is the whole Windows output. Keep it off
         // unless the user explicitly opts in from the source picker.
         // restrictOwnAudio avoids feeding VoiceRoom's own playback back into
@@ -484,6 +518,9 @@ class PeerManager {
     const peer = this.peers.get(participantId);
     if (!peer) return;
     peer.connection.ontrack = null;
+    peer.connection.onconnectionstatechange = null;
+    peer.connection.oniceconnectionstatechange = null;
+    peer.connection.onicecandidate = null;
     peer.connection.close();
     this.peers.delete(participantId);
     this.onPeerState(participantId, 'closed');
