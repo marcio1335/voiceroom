@@ -12,7 +12,6 @@ const elements = {
   copy: document.querySelector('#copy-room-code'),
   copyInvite: document.querySelector('#copy-invite-link'),
   participants: document.querySelector('#participants'),
-  callParticipantGrid: document.querySelector('#call-participant-grid'),
   microphone: document.querySelector('#microphone'),
   microphoneSelect: document.querySelector('#microphone-select'),
   echoCancellation: document.querySelector('#echo-cancellation'),
@@ -382,7 +381,6 @@ function getScreenParticipantIds(room) {
 
 function renderParticipants() {
   elements.participants.replaceChildren();
-  renderCallParticipantGrid();
   if (!currentRoom) return;
   for (const participant of currentRoom.participants) {
     const item = document.createElement('li');
@@ -390,7 +388,7 @@ function renderParticipants() {
     item.dataset.participantRow = participant.participantId;
     item.dataset.speaking = String(speakingParticipants.has(participant.participantId));
     const state = speakingParticipants.has(participant.participantId)
-      ? '🔊'
+      ? '●'
       : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
     const stateElement = document.createElement('span');
     stateElement.className = 'participant-state';
@@ -419,30 +417,6 @@ function renderParticipants() {
   }
 }
 
-function renderCallParticipantGrid() {
-  if (!elements.callParticipantGrid) return;
-  elements.callParticipantGrid.replaceChildren();
-  if (!currentRoom) return;
-  for (const participant of currentRoom.participants) {
-    const card = document.createElement('article');
-    card.className = 'call-participant-card';
-    card.dataset.callParticipant = participant.participantId;
-    card.dataset.speaking = String(speakingParticipants.has(participant.participantId));
-    const avatar = document.createElement('span');
-    avatar.className = 'call-participant-avatar';
-    avatar.textContent = participant.displayName.trim().slice(0, 1).toUpperCase() || '?';
-    const name = document.createElement('span');
-    name.className = 'call-participant-name';
-    name.textContent = participant.displayName + (participant.participantId === selfId ? ' (você)' : '');
-    const state = document.createElement('span');
-    state.className = 'call-participant-state';
-    state.setAttribute('aria-hidden', 'true');
-    state.textContent = speakingParticipants.has(participant.participantId) ? '🔊' : participant.muted ? '⌁' : '•';
-    card.append(avatar, name, state);
-    elements.callParticipantGrid.append(card);
-  }
-}
-
 function setSpeakingState(participantId, speaking) {
   if (speaking) speakingParticipants.add(participantId);
   else speakingParticipants.delete(participantId);
@@ -453,14 +427,7 @@ function setSpeakingState(participantId, speaking) {
   const state = item.querySelector('.participant-state');
   const participant = currentRoom?.participants.find((entry) => entry.participantId === participantId);
   if (state && participant) {
-    state.textContent = speaking ? '🔊' : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
-  }
-  const callCard = [...document.querySelectorAll('[data-call-participant]')]
-    .find((candidate) => candidate.dataset.callParticipant === participantId);
-  if (callCard) {
-    callCard.dataset.speaking = String(speaking);
-    const callState = callCard.querySelector('.call-participant-state');
-    if (callState && participant) callState.textContent = speaking ? '🔊' : participant.muted ? '⌁' : '•';
+    state.textContent = speaking ? '●' : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
   }
 }
 
@@ -486,25 +453,56 @@ function startSpeakingMonitor(participantId, track) {
     const stream = new MediaStream([track]);
     const source = speakingAudioContext.createMediaStreamSource(stream);
     const analyser = speakingAudioContext.createAnalyser();
-    analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.72;
+    analyser.fftSize = 512;
+    analyser.minDecibels = -90;
+    analyser.maxDecibels = -10;
+    analyser.smoothingTimeConstant = 0.38;
     source.connect(analyser);
-    const samples = new Uint8Array(analyser.fftSize);
-    const monitor = { source, analyser, stream, samples, active: true, speaking: false, animationFrame: null };
+    const samples = new Float32Array(analyser.fftSize);
+    const monitor = {
+      source,
+      analyser,
+      stream,
+      samples,
+      active: true,
+      speaking: false,
+      animationFrame: null,
+      noiseFloor: 0.008,
+      voiceStartedAt: 0,
+      lastVoiceAt: 0
+    };
     speakingMonitors.set(participantId, monitor);
     const update = () => {
       if (!monitor.active) return;
-      analyser.getByteTimeDomainData(samples);
+      analyser.getFloatTimeDomainData(samples);
       let sum = 0;
       for (const sample of samples) {
-        const normalized = (sample - 128) / 128;
-        sum += normalized * normalized;
+        sum += sample * sample;
       }
       const rms = Math.sqrt(sum / samples.length);
-      const nextSpeaking = monitor.speaking ? rms > 0.025 : rms > 0.04;
-      if (nextSpeaking !== monitor.speaking) {
-        monitor.speaking = nextSpeaking;
-        setSpeakingState(participantId, nextSpeaking);
+      const now = performance.now();
+      if (!monitor.speaking) {
+        monitor.noiseFloor = monitor.noiseFloor * 0.96 + Math.min(rms, monitor.noiseFloor * 3) * 0.04;
+      }
+      const startThreshold = Math.max(0.018, monitor.noiseFloor * 2.6);
+      const stopThreshold = Math.max(0.012, monitor.noiseFloor * 1.45);
+      if (!monitor.speaking) {
+        if (rms > startThreshold) {
+          monitor.voiceStartedAt ||= now;
+          if (now - monitor.voiceStartedAt >= 70) {
+            monitor.speaking = true;
+            monitor.lastVoiceAt = now;
+            setSpeakingState(participantId, true);
+          }
+        } else {
+          monitor.voiceStartedAt = 0;
+        }
+      } else if (rms > stopThreshold) {
+        monitor.lastVoiceAt = now;
+      } else if (now - monitor.lastVoiceAt >= 220) {
+        monitor.speaking = false;
+        monitor.voiceStartedAt = 0;
+        setSpeakingState(participantId, false);
       }
       monitor.animationFrame = requestAnimationFrame(update);
     };
