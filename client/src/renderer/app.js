@@ -309,6 +309,17 @@ async function toggleScreenFullscreen() {
   try {
     if (document.fullscreenElement) {
       await document.exitFullscreen();
+      return;
+    }
+
+    // Fullscreen the stable stage container instead of the MediaStream video
+    // itself. This keeps the WebRTC element attached to the same layout and
+    // avoids black frames when Chromium/Electron changes fullscreen surfaces.
+    const target = elements.screenStage;
+    if (target.requestFullscreen) {
+      await target.requestFullscreen({ navigationUI: 'hide' });
+    } else if (target.webkitRequestFullscreen) {
+      target.webkitRequestFullscreen();
     } else if (video.requestFullscreen) {
       await video.requestFullscreen();
     } else if (video.webkitEnterFullscreen) {

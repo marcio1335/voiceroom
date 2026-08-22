@@ -82,6 +82,8 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 .screen-stage[data-active="true"] { border-style: solid; }
 .screen-stage video { width: 100%; height: 100%; max-height: 520px; object-fit: contain; }
 .screen-stage video:fullscreen, .screen-stage video:-webkit-full-screen { width: 100vw; height: 100vh; max-height: none; background: #000; object-fit: contain; }
+.screen-stage:fullscreen, .screen-stage:-webkit-full-screen { width: 100vw; height: 100vh; min-height: 100vh; border: 0; border-radius: 0; background: #000; }
+.screen-stage:fullscreen video, .screen-stage:-webkit-full-screen video { width: 100%; height: 100%; max-height: none; background: #000; object-fit: contain; }
 .empty-stage { display: grid; place-items: center; gap: 8px; padding: 30px; text-align: center; }
 .stage-icon { font-size: 44px; }
 .call-controls { display: grid; gap: 12px; margin-top: 18px; }
