@@ -66,10 +66,10 @@ function createTray() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1_080,
-    height: 760,
-    minWidth: 820,
-    minHeight: 620,
+    width: 1_200,
+    height: 820,
+    minWidth: 900,
+    minHeight: 640,
     show: false,
     icon: path.join(__dirname, '..', '..', 'assets', 'voice-icon.png'),
     autoHideMenuBar: true,
