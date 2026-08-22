@@ -309,12 +309,6 @@ function setStatus(message, type = 'info') {
   elements.status.dataset.type = type;
 }
 
-function setActiveNav(step) {
-  document.querySelectorAll('[data-nav-step]').forEach((item) => {
-    item.classList.toggle('is-active', item.dataset.navStep === step);
-  });
-}
-
 function updateLatencyLabel(value) {
   if (!elements.latency) return;
   if (!Number.isFinite(value)) {
@@ -583,7 +577,6 @@ function enterRoom(result) {
   roomCode = result.data.room.code;
   elements.landing.hidden = true;
   elements.room.hidden = false;
-  setActiveNav('call');
   setStatus('Sala pronta. Ative o microfone quando quiser.', 'success');
   renderRoom(result.data.room);
   peerManager = new PeerManager({
@@ -1013,7 +1006,6 @@ async function leaveRoom() {
   selectedScreenParticipantId = null;
   elements.room.hidden = true;
   elements.landing.hidden = false;
-  setActiveNav('entry');
   elements.screenStage.querySelectorAll('[data-screen-tile]').forEach((tile) => tile.remove());
   elements.screenStage.querySelectorAll('[data-participant-audio]').forEach((audio) => audio.remove());
   elements.screenEmptyStage.hidden = false;
