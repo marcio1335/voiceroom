@@ -333,6 +333,10 @@ class PeerManager {
 
   async handleOffer(fromParticipantId, description) {
     const peer = this.peers.get(fromParticipantId) || this.#createPeer({ participantId: fromParticipantId });
+    return this.#queueSignaling(peer, () => this.#applyOffer(peer, fromParticipantId, description));
+  }
+
+  async #applyOffer(peer, fromParticipantId, description) {
     const offerCollision = description?.type === 'offer'
       && (peer.makingOffer || peer.connection.signalingState !== 'stable');
     peer.ignoreOffer = !peer.polite && offerCollision;
@@ -355,6 +359,10 @@ class PeerManager {
   async handleAnswer(fromParticipantId, description) {
     const peer = this.peers.get(fromParticipantId);
     if (!peer) return;
+    return this.#queueSignaling(peer, () => this.#applyAnswer(peer, description));
+  }
+
+  async #applyAnswer(peer, description) {
     await peer.connection.setRemoteDescription(description);
     for (const candidate of peer.pendingCandidates.splice(0)) {
       await peer.connection.addIceCandidate(candidate);
@@ -364,6 +372,10 @@ class PeerManager {
 
   async handleIce(fromParticipantId, candidate) {
     const peer = this.peers.get(fromParticipantId) || this.#createPeer({ participantId: fromParticipantId });
+    return this.#queueSignaling(peer, () => this.#applyIce(peer, candidate));
+  }
+
+  async #applyIce(peer, candidate) {
     if (peer.ignoreOffer) return;
     if (!peer.connection.remoteDescription) {
       peer.pendingCandidates.push(candidate);
@@ -483,13 +495,15 @@ class PeerManager {
       participantId: participant.participantId,
       connection,
       pendingCandidates: [],
+      signalQueue: Promise.resolve(),
       audioSender: null,
       screenSenders: [],
       negotiationQueue: Promise.resolve(),
       polite: this.selfId > participant.participantId,
       makingOffer: false,
       ignoreOffer: false,
-      needsNegotiation: false
+      needsNegotiation: false,
+      iceRestartAttempts: 0
     };
     this.peers.set(participant.participantId, peer);
     if (this.audioStream) {
@@ -510,10 +524,31 @@ class PeerManager {
       this.onPeerState(participant.participantId, connection.connectionState);
       if (['failed', 'closed'].includes(connection.connectionState)) this.onError(participant.participantId, 'P2P_FAILED');
     };
+    connection.oniceconnectionstatechange = () => {
+      const state = connection.iceConnectionState;
+      if (['connected', 'completed'].includes(state)) {
+        peer.iceRestartAttempts = 0;
+        return;
+      }
+      if (state !== 'failed' || peer.iceRestartAttempts >= 2 || !this.peers.has(peer.participantId)) return;
+      peer.iceRestartAttempts += 1;
+      try {
+        connection.restartIce?.();
+      } catch {
+        // O estado pode ter mudado para closed enquanto o ICE falhava.
+      }
+      this.#renegotiate(peer, { iceRestart: true }).catch(() => {});
+    };
     return peer;
   }
 
-  async #renegotiate(peer) {
+  #queueSignaling(peer, task) {
+    const next = peer.signalQueue.catch(() => {}).then(task);
+    peer.signalQueue = next.catch(() => {});
+    return next;
+  }
+
+  async #renegotiate(peer, { iceRestart = false } = {}) {
     if (!peer || !this.peers.has(peer.participantId)) return;
     peer.needsNegotiation = true;
     const negotiate = async () => {
@@ -522,7 +557,7 @@ class PeerManager {
       peer.needsNegotiation = false;
       peer.makingOffer = true;
       try {
-        const offer = await peer.connection.createOffer();
+        const offer = await peer.connection.createOffer(iceRestart ? { iceRestart: true } : undefined);
         if (peer.connection.signalingState !== 'stable') {
           peer.needsNegotiation = true;
           return;
