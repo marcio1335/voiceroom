@@ -359,7 +359,7 @@ class PeerManager {
     await peer.connection.addIceCandidate(candidate);
   }
 
-  async startScreenShare(sourceId) {
+  async startScreenShare(sourceId, { includeSystemAudio = false } = {}) {
     const lock = await this.socket.startScreenShare();
     if (!lock?.ok) throw new Error(lock?.message || 'Não foi possível iniciar o compartilhamento.');
     try {
@@ -368,7 +368,11 @@ class PeerManager {
       }
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { max: 1280 }, height: { max: 720 }, frameRate: { max: 30 } },
-        audio: true
+        // Electron's loopback audio is the whole Windows output. Keep it off
+        // unless the user explicitly opts in from the source picker.
+        // restrictOwnAudio avoids feeding VoiceRoom's own playback back into
+        // the shared track on Electron/Chromium versions that support it.
+        audio: includeSystemAudio ? { restrictOwnAudio: true } : false
       });
       const track = stream.getVideoTracks()[0];
       if (!track) throw new Error('A captura não forneceu vídeo.');

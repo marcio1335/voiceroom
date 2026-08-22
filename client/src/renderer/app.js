@@ -30,6 +30,7 @@ const elements = {
   screenStage: document.querySelector('#screen-stage'),
   sourcePicker: document.querySelector('#source-picker'),
   sourceList: document.querySelector('#source-list'),
+  includeScreenAudio: document.querySelector('#include-screen-audio'),
   cancelSource: document.querySelector('#cancel-source'),
   status: document.querySelector('#status'),
   notice: document.querySelector('#notice')
@@ -266,7 +267,7 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
   elements.screenStage.dataset.active = 'true';
   elements.screenFullscreen.disabled = false;
   elements.screenAudioStatus.textContent = stream.getAudioTracks?.().length
-    ? 'Áudio da tela ativo'
+    ? 'Áudio do sistema ativo'
     : 'Vídeo compartilhado sem áudio';
 }
 
@@ -423,8 +424,10 @@ async function toggleScreen() {
       renderRoom(currentRoom);
       return;
     }
-    const sourceId = await chooseScreenSource();
-    const stream = await peerManager.startScreenShare(sourceId);
+    const selection = await chooseScreenSource();
+    const stream = await peerManager.startScreenShare(selection.sourceId, {
+      includeSystemAudio: selection.includeSystemAudio
+    });
     sharingScreen = true;
     renderScreenStream(selfId, stream, { muted: true });
     renderRoom(currentRoom);
@@ -434,10 +437,13 @@ async function toggleScreen() {
 }
 
 async function chooseScreenSource() {
-  if (!window.voiceRoom?.getScreenSources) return undefined;
+  if (!window.voiceRoom?.getScreenSources) {
+    return { sourceId: undefined, includeSystemAudio: false };
+  }
   const sources = await window.voiceRoom.getScreenSources();
   if (!sources.length) throw new Error('Nenhuma janela ou tela disponível para compartilhar.');
   elements.sourceList.replaceChildren();
+  elements.includeScreenAudio.checked = false;
   return new Promise((resolve, reject) => {
     const close = () => {
       elements.sourcePicker.hidden = true;
@@ -455,7 +461,10 @@ async function chooseScreenSource() {
       button.textContent = source.name;
       button.addEventListener('click', () => {
         close();
-        resolve(source.id);
+        resolve({
+          sourceId: source.id,
+          includeSystemAudio: elements.includeScreenAudio.checked
+        });
       }, { once: true });
       elements.sourceList.append(button);
     }
