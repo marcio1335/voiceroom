@@ -60,6 +60,15 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 .participant-state { width: 20px; text-align: center; color: var(--primary); }
 .sidebar-spacer { flex: 1; min-height: 20px; }
 .room-sidebar select { margin-bottom: 14px; }
+.audio-settings { display: grid; gap: 9px; margin-bottom: 14px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: #111720; }
+.audio-settings .section-heading { margin-bottom: 2px; }
+.audio-settings .section-heading h2 { font-size: 14px; }
+.audio-option { display: flex; align-items: center; gap: 8px; margin: 0; color: #d7dfeb; font-size: 12px; font-weight: 500; }
+.audio-option input[type="checkbox"] { width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--primary); }
+.audio-range-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 3px 0 0; font-size: 12px; }
+.audio-range-label output { color: var(--primary); font-variant-numeric: tabular-nums; }
+.audio-settings input[type="range"] { width: 100%; height: 18px; margin: 0; padding: 0; accent-color: var(--primary); background: transparent; }
+.audio-help { line-height: 1.35; }
 .microphone-test { display: grid; gap: 8px; margin-bottom: 14px; }
 .test-heading { display: flex; align-items: center; justify-content: space-between; }
 .meter { height: 6px; overflow: hidden; border-radius: 99px; background: #0c1118; }

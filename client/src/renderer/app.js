@@ -13,6 +13,11 @@ const elements = {
   participants: document.querySelector('#participants'),
   microphone: document.querySelector('#microphone'),
   microphoneSelect: document.querySelector('#microphone-select'),
+  echoCancellation: document.querySelector('#echo-cancellation'),
+  noiseSuppression: document.querySelector('#noise-suppression'),
+  autoGainControl: document.querySelector('#auto-gain-control'),
+  microphoneGain: document.querySelector('#microphone-gain'),
+  microphoneGainValue: document.querySelector('#microphone-gain-value'),
   testMicrophone: document.querySelector('#test-microphone'),
   microphoneLevel: document.querySelector('#microphone-level'),
   microphoneTestStatus: document.querySelector('#microphone-test-status'),
@@ -33,6 +38,69 @@ let roomCode;
 let currentRoom;
 let muted = false;
 let sharingScreen = false;
+
+const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
+const DEFAULT_AUDIO_SETTINGS = Object.freeze({
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  inputGain: 1
+});
+
+function clampInputGain(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return DEFAULT_AUDIO_SETTINGS.inputGain;
+  return Math.min(2, Math.max(0, numericValue));
+}
+
+function loadAudioSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AUDIO_SETTINGS_STORAGE_KEY) || '{}');
+    return {
+      echoCancellation: saved.echoCancellation !== false,
+      noiseSuppression: saved.noiseSuppression !== false,
+      autoGainControl: saved.autoGainControl !== false,
+      inputGain: clampInputGain(saved.inputGain)
+    };
+  } catch {
+    return { ...DEFAULT_AUDIO_SETTINGS };
+  }
+}
+
+let audioSettings = loadAudioSettings();
+
+function persistAudioSettings() {
+  try {
+    localStorage.setItem(AUDIO_SETTINGS_STORAGE_KEY, JSON.stringify(audioSettings));
+  } catch {
+    // Preferimos manter a configuração apenas durante esta execução se o armazenamento estiver indisponível.
+  }
+}
+
+function syncAudioSettingsControls() {
+  elements.echoCancellation.checked = audioSettings.echoCancellation;
+  elements.noiseSuppression.checked = audioSettings.noiseSuppression;
+  elements.autoGainControl.checked = audioSettings.autoGainControl;
+  elements.microphoneGain.value = String(Math.round(audioSettings.inputGain * 100));
+  elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
+}
+
+function readAudioSettingsFromControls() {
+  audioSettings = {
+    echoCancellation: elements.echoCancellation.checked,
+    noiseSuppression: elements.noiseSuppression.checked,
+    autoGainControl: elements.autoGainControl.checked,
+    inputGain: clampInputGain(Number(elements.microphoneGain.value) / 100)
+  };
+  elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
+  persistAudioSettings();
+  peerManager?.setInputGain(audioSettings.inputGain);
+}
+
+function changeAudioProcessing() {
+  readAudioSettingsFromControls();
+  if (peerManager?.getAudioTrack()) initializeAudio();
+}
 
 function setStatus(message, type = 'info') {
   elements.status.textContent = message;
@@ -131,7 +199,7 @@ function attachRemoteStream(participantId, track, stream) {
 
 async function initializeAudio() {
   try {
-    await peerManager.startAudio(elements.microphoneSelect.value || undefined);
+    await peerManager.startAudio(elements.microphoneSelect.value || undefined, audioSettings);
     elements.microphone.disabled = false;
     setStatus('Microfone conectado.', 'success');
   } catch (error) {
@@ -156,7 +224,8 @@ async function toggleMicrophoneLoopback() {
   try {
     await peerManager.startMicrophoneLoopback(
       elements.microphoneSelect.value || undefined,
-      (level) => { elements.microphoneLevel.style.width = `${Math.round(level * 100)}%`; }
+      (level) => { elements.microphoneLevel.style.width = `${Math.round(level * 100)}%`; },
+      audioSettings.inputGain
     );
     elements.testMicrophone.textContent = 'Parar retorno';
   } catch (error) {
@@ -292,6 +361,10 @@ function bindEvents() {
   });
   elements.microphone.addEventListener('click', toggleMicrophone);
   elements.microphoneSelect.addEventListener('change', initializeAudio);
+  elements.echoCancellation.addEventListener('change', changeAudioProcessing);
+  elements.noiseSuppression.addEventListener('change', changeAudioProcessing);
+  elements.autoGainControl.addEventListener('change', changeAudioProcessing);
+  elements.microphoneGain.addEventListener('input', readAudioSettingsFromControls);
   elements.testMicrophone.addEventListener('click', toggleMicrophoneLoopback);
   elements.screen.addEventListener('click', toggleScreen);
   elements.leave.addEventListener('click', leaveRoom);
@@ -331,6 +404,7 @@ function handleSocketEvent(event, payload) {
 }
 
 function bootstrap() {
+  syncAudioSettingsControls();
   bindEvents();
   socketClient = new SocketClient({ onEvent: handleSocketEvent });
   setStatus('Conectando ao servidor…');

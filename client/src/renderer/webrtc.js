@@ -1,11 +1,29 @@
 const { ICE_SERVERS } = require('./config');
 
-function getAudioConstraints(deviceId, { processed = true } = {}) {
+const DEFAULT_AUDIO_SETTINGS = Object.freeze({
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  inputGain: 1
+});
+
+function clampInputGain(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return DEFAULT_AUDIO_SETTINGS.inputGain;
+  return Math.min(2, Math.max(0, numericValue));
+}
+
+function getAudioConstraints(deviceId, {
+  processed = true,
+  echoCancellation = DEFAULT_AUDIO_SETTINGS.echoCancellation,
+  noiseSuppression = DEFAULT_AUDIO_SETTINGS.noiseSuppression,
+  autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl
+} = {}) {
   const audio = processed
     ? {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
+      echoCancellation: Boolean(echoCancellation),
+      noiseSuppression: Boolean(noiseSuppression),
+      autoGainControl: Boolean(autoGainControl)
     }
     : {
       echoCancellation: false,
@@ -14,6 +32,25 @@ function getAudioConstraints(deviceId, { processed = true } = {}) {
     };
   if (deviceId) audio.deviceId = { exact: deviceId };
   return audio;
+}
+
+function createAudioContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  return new AudioContextClass({ latencyHint: 'interactive' });
+}
+
+function stopStream(stream) {
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+}
+
+async function closeAudioContext(audioContext) {
+  if (!audioContext || audioContext.state === 'closed') return;
+  try {
+    await audioContext.close();
+  } catch {
+    // O contexto pode já ter sido encerrado pelo Electron.
+  }
 }
 
 class PeerManager {
@@ -25,29 +62,80 @@ class PeerManager {
     this.onError = onError;
     this.peers = new Map();
     this.audioStream = null;
+    this.audioCaptureStream = null;
+    this.audioContext = null;
+    this.audioGainNode = null;
     this.screenStream = null;
     this.microphoneLoopback = null;
+    this.muted = false;
   }
 
-  async startAudio(deviceId) {
+  async startAudio(deviceId, settings = {}) {
+    const audioSettings = {
+      ...DEFAULT_AUDIO_SETTINGS,
+      ...settings,
+      inputGain: clampInputGain(settings.inputGain)
+    };
     const constraints = {
-      audio: getAudioConstraints(deviceId),
+      audio: getAudioConstraints(deviceId, audioSettings),
       video: false
     };
-    const nextStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const captureStream = await navigator.mediaDevices.getUserMedia(constraints);
+    let nextStream = captureStream;
+    let nextAudioContext = null;
+    let nextGainNode = null;
+
+    try {
+      nextAudioContext = createAudioContext();
+      if (nextAudioContext) {
+        await nextAudioContext.resume();
+        const source = nextAudioContext.createMediaStreamSource(captureStream);
+        nextGainNode = nextAudioContext.createGain();
+        nextGainNode.gain.value = audioSettings.inputGain;
+        const destination = nextAudioContext.createMediaStreamDestination();
+        source.connect(nextGainNode).connect(destination);
+        nextStream = destination.stream;
+      }
+    } catch {
+      await closeAudioContext(nextAudioContext);
+      nextAudioContext = null;
+      nextGainNode = null;
+      nextStream = captureStream;
+    }
+
     const oldStream = this.audioStream;
+    const oldCaptureStream = this.audioCaptureStream;
+    const oldAudioContext = this.audioContext;
+    const oldGainNode = this.audioGainNode;
     this.audioStream = nextStream;
-    if (oldStream) oldStream.getTracks().forEach((track) => track.stop());
+    this.audioCaptureStream = captureStream;
+    this.audioContext = nextAudioContext;
+    this.audioGainNode = nextGainNode;
+    const nextTrack = nextStream.getAudioTracks()[0];
+    if (!nextTrack) {
+      stopStream(nextStream);
+      if (captureStream !== nextStream) stopStream(captureStream);
+      await closeAudioContext(nextAudioContext);
+      this.audioStream = oldStream;
+      this.audioCaptureStream = oldCaptureStream;
+      this.audioContext = oldAudioContext;
+      this.audioGainNode = oldGainNode;
+      throw new Error('O dispositivo não forneceu uma faixa de áudio.');
+    }
+    nextTrack.enabled = !this.muted;
 
     for (const peer of this.peers.values()) {
       const sender = peer.connection.getSenders().find((item) => item.track?.kind === 'audio');
       if (sender) {
-        await sender.replaceTrack(nextStream.getAudioTracks()[0]);
+        await sender.replaceTrack(nextTrack);
       } else {
-        peer.connection.addTrack(nextStream.getAudioTracks()[0], nextStream);
+        peer.connection.addTrack(nextTrack, nextStream);
         await this.#renegotiate(peer);
       }
     }
+    stopStream(oldStream);
+    if (oldCaptureStream && oldCaptureStream !== oldStream) stopStream(oldCaptureStream);
+    await closeAudioContext(oldAudioContext);
     return nextStream;
   }
 
@@ -55,21 +143,37 @@ class PeerManager {
     return this.audioStream?.getAudioTracks()[0] || null;
   }
 
-  async startMicrophoneLoopback(deviceId, onLevel = () => {}) {
+  async startMicrophoneLoopback(deviceId, onLevel = () => {}, inputGain = 1) {
     if (this.microphoneLoopback) return;
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: getAudioConstraints(deviceId, { processed: false }),
       video: false
     });
-    const audioContext = new AudioContext();
-    await audioContext.resume();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 512;
-    const source = audioContext.createMediaStreamSource(stream);
-    const samples = new Uint8Array(analyser.fftSize);
-    source.connect(analyser);
-    analyser.connect(audioContext.destination);
-    const loopback = { stream, audioContext, analyser, source, animationFrame: null, active: true };
+    const audioContext = createAudioContext();
+    if (!audioContext) {
+      stopStream(stream);
+      throw new Error('O retorno de áudio não está disponível neste sistema.');
+    }
+    let analyser;
+    let source;
+    let gainNode;
+    let samples;
+    try {
+      await audioContext.resume();
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      source = audioContext.createMediaStreamSource(stream);
+      gainNode = audioContext.createGain();
+      gainNode.gain.value = clampInputGain(inputGain);
+      samples = new Uint8Array(analyser.fftSize);
+      source.connect(gainNode).connect(analyser);
+      analyser.connect(audioContext.destination);
+    } catch (error) {
+      stopStream(stream);
+      await closeAudioContext(audioContext);
+      throw error;
+    }
+    const loopback = { stream, audioContext, analyser, source, gainNode, animationFrame: null, active: true };
     this.microphoneLoopback = loopback;
     const updateLevel = () => {
       if (!loopback.active) return;
@@ -92,16 +196,33 @@ class PeerManager {
     loopback.active = false;
     if (loopback.animationFrame) cancelAnimationFrame(loopback.animationFrame);
     loopback.source.disconnect();
+    loopback.gainNode.disconnect();
     loopback.analyser.disconnect();
-    loopback.stream.getTracks().forEach((track) => track.stop());
-    await loopback.audioContext.close();
+    stopStream(loopback.stream);
+    await closeAudioContext(loopback.audioContext);
     this.microphoneLoopback = null;
     onLevel(0);
+  }
+
+  setInputGain(inputGain) {
+    const value = clampInputGain(inputGain);
+    if (this.audioGainNode && this.audioContext) {
+      this.audioGainNode.gain.setTargetAtTime(value, this.audioContext.currentTime, 0.01);
+    }
+    if (this.microphoneLoopback?.gainNode && this.microphoneLoopback.audioContext) {
+      this.microphoneLoopback.gainNode.gain.setTargetAtTime(
+        value,
+        this.microphoneLoopback.audioContext.currentTime,
+        0.01
+      );
+    }
+    return value;
   }
 
   setMuted(muted) {
     const track = this.getAudioTrack();
     if (!track) return false;
+    this.muted = Boolean(muted);
     track.enabled = !muted;
     return muted;
   }
@@ -190,8 +311,17 @@ class PeerManager {
   }
 
   close() {
-    if (this.audioStream) this.audioStream.getTracks().forEach((track) => track.stop());
-    if (this.screenStream) this.screenStream.getTracks().forEach((track) => track.stop());
+    const audioStream = this.audioStream;
+    const audioCaptureStream = this.audioCaptureStream;
+    const audioContext = this.audioContext;
+    this.audioStream = null;
+    this.audioCaptureStream = null;
+    this.audioContext = null;
+    this.audioGainNode = null;
+    stopStream(audioStream);
+    if (audioCaptureStream && audioCaptureStream !== audioStream) stopStream(audioCaptureStream);
+    closeAudioContext(audioContext).catch(() => {});
+    stopStream(this.screenStream);
     this.stopMicrophoneLoopback().catch(() => {});
     for (const participantId of this.peers.keys()) this.removePeer(participantId);
   }

@@ -76,6 +76,10 @@ O MVP usa STUN, mas ainda não usa TURN. Pessoas em algumas redes corporativas, 
 
 Dentro de uma sala, selecione o dispositivo e use **Ouvir microfone**. O app liga um retorno em tempo real local sem o processamento da chamada, mostra o nível capturado e não envia esse teste aos participantes. Use fones para evitar microfonia; clique novamente em **Parar retorno** para encerrar.
 
+## Ajustes de áudio
+
+Na seção **Áudio** da sala, é possível ativar ou desativar separadamente o cancelamento de eco, a supressão de ruído e o ganho automático. O controle **Sensibilidade do microfone** aplica ganho de 0% a 200% ao áudio enviado aos participantes. Essas preferências ficam salvas localmente neste computador e podem ser alteradas durante a chamada; se o som começar a cortar, experimente desativar o cancelamento de eco ou reduzir o ganho.
+
 ## Limitações conhecidas do MVP
 
 - A topologia é WebRTC Mesh e suporta oficialmente até 5 participantes.

@@ -51,6 +51,30 @@
           <div class="sidebar-spacer"></div>
           <label class="small muted" for="microphone-select">Microfone</label>
           <select id="microphone-select"><option value="">Padrão do Windows</option></select>
+          <section class="audio-settings" aria-labelledby="audio-settings-title">
+            <div class="section-heading">
+              <h2 id="audio-settings-title">Áudio</h2>
+              <span class="pill">ajustes</span>
+            </div>
+            <label class="audio-option">
+              <input id="echo-cancellation" type="checkbox" checked />
+              <span>Cancelamento de eco</span>
+            </label>
+            <label class="audio-option">
+              <input id="noise-suppression" type="checkbox" checked />
+              <span>Supressão de ruído</span>
+            </label>
+            <label class="audio-option">
+              <input id="auto-gain-control" type="checkbox" checked />
+              <span>Ganho automático</span>
+            </label>
+            <label class="audio-range-label" for="microphone-gain">
+              <span>Sensibilidade do microfone</span>
+              <output id="microphone-gain-value" for="microphone-gain">100%</output>
+            </label>
+            <input id="microphone-gain" type="range" min="0" max="200" step="5" value="100" />
+            <span class="small muted audio-help">Aplicado ao áudio enviado. O teste de retorno usa o sinal direto.</span>
+          </section>
           <div class="microphone-test">
             <div class="test-heading">
               <span class="small muted">Teste de retorno</span>
