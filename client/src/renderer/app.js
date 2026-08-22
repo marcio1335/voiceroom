@@ -48,7 +48,10 @@ const elements = {
   cancelSource: document.querySelector('#cancel-source'),
   status: document.querySelector('#status'),
   latency: document.querySelector('#latency'),
-  notice: document.querySelector('#notice')
+  notice: document.querySelector('#notice'),
+  profileBadge: document.querySelector('#profile-badge'),
+  profilePhotoInput: document.querySelector('#profile-photo-input'),
+  landingAvatar: document.querySelector('#landing-avatar')
 };
 
 let socketClient;
@@ -75,6 +78,8 @@ let speakingAudioContext = null;
 const PARTICIPANT_VOLUME_STORAGE_KEY = 'voiceroom.participantVolumes';
 const DISPLAY_NAME_STORAGE_KEY = 'voiceroom.displayName';
 const SCREEN_QUALITY_STORAGE_KEY = 'voiceroom.screenQuality';
+const PROFILE_AVATAR_STORAGE_KEY = 'voiceroom.profileAvatar';
+const MAX_PROFILE_AVATAR_LENGTH = 32_000;
 
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
 const DEFAULT_AUDIO_SETTINGS = Object.freeze({
@@ -119,6 +124,128 @@ function loadAudioSettings() {
 }
 
 let audioSettings = loadAudioSettings();
+let profileAvatar = '';
+
+function normalizeAvatarData(value) {
+  if (typeof value !== 'string' || value.length > MAX_PROFILE_AVATAR_LENGTH) return '';
+  return /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : '';
+}
+
+function loadProfileAvatar() {
+  try { return normalizeAvatarData(localStorage.getItem(PROFILE_AVATAR_STORAGE_KEY) || ''); } catch { return ''; }
+}
+
+function persistProfileAvatar() {
+  try {
+    if (profileAvatar) localStorage.setItem(PROFILE_AVATAR_STORAGE_KEY, profileAvatar);
+    else localStorage.removeItem(PROFILE_AVATAR_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getAvatarInitials(displayName = '') {
+  const words = displayName.trim().split(/\s+/).filter(Boolean);
+  return (words.length > 1 ? `${words[0][0]}${words.at(-1)[0]}` : words[0]?.[0] || 'V').toUpperCase();
+}
+
+function renderAvatarElement(element, avatar, fallback) {
+  if (!element) return;
+  element.replaceChildren();
+  element.classList.toggle('has-avatar', Boolean(avatar));
+  if (avatar) {
+    const image = document.createElement('img');
+    image.src = avatar;
+    image.alt = '';
+    image.draggable = false;
+    element.append(image);
+  } else {
+    element.textContent = fallback;
+  }
+}
+
+function renderProfileAvatar() {
+  const fallback = getAvatarInitials(elements.name?.value || 'VoiceRoom');
+  renderAvatarElement(elements.profileBadge, profileAvatar, fallback);
+  if (elements.profileBadge) {
+    elements.profileBadge.title = profileAvatar
+      ? 'Clique para trocar sua foto de perfil'
+      : 'Clique para escolher uma foto de perfil';
+  }
+  if (elements.landingAvatar) {
+    renderAvatarElement(elements.landingAvatar, profileAvatar, fallback);
+    const camera = document.createElement('span');
+    camera.textContent = '⌕';
+    camera.setAttribute('aria-hidden', 'true');
+    elements.landingAvatar.append(camera);
+  }
+}
+
+function resizeAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Não foi possível ler a imagem.'));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error('A imagem não pôde ser carregada.'));
+      image.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          reject(new Error('Seu sistema não permite preparar esta imagem.'));
+          return;
+        }
+        context.fillStyle = '#1a1a1f';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        const scale = Math.max(canvas.width / image.width, canvas.height / image.height);
+        const width = image.width * scale;
+        const height = image.height * scale;
+        context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+        let avatar = canvas.toDataURL('image/jpeg', 0.82);
+        if (avatar.length > MAX_PROFILE_AVATAR_LENGTH) avatar = canvas.toDataURL('image/jpeg', 0.62);
+        if (avatar.length > MAX_PROFILE_AVATAR_LENGTH) {
+          reject(new Error('Escolha uma imagem menor.'));
+          return;
+        }
+        resolve(avatar);
+      };
+      image.src = String(reader.result || '');
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleProfilePhotoChange() {
+  const file = elements.profilePhotoInput?.files?.[0];
+  if (!file) return;
+  elements.profilePhotoInput.value = '';
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    showNotice('Escolha uma imagem PNG, JPG ou WebP.');
+    return;
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    showNotice('A imagem deve ter no máximo 8 MB antes da compactação.');
+    return;
+  }
+  try {
+    profileAvatar = await resizeAvatar(file);
+    renderProfileAvatar();
+    if (!persistProfileAvatar()) showNotice('Foto aplicada, mas não foi possível salvá-la localmente.', 'warning');
+    if (currentRoom && socketClient) {
+      const response = await socketClient.setProfileAvatar(profileAvatar);
+      if (!response?.ok) showNotice(responseError(response));
+      const self = currentRoom.participants.find((participant) => participant.participantId === selfId);
+      if (self) self.avatar = profileAvatar;
+      renderParticipants();
+    }
+    showNotice('Foto de perfil atualizada.', 'success');
+  } catch (error) {
+    showNotice(error.message || 'Não foi possível usar essa imagem.');
+  }
+}
 
 function persistAudioSettings() {
   try {
@@ -393,13 +520,17 @@ function renderParticipants() {
     const stateElement = document.createElement('span');
     stateElement.className = 'participant-state';
     stateElement.setAttribute('aria-hidden', 'true');
-    stateElement.textContent = state;
+    renderAvatarElement(stateElement, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
     const nameElement = document.createElement('span');
     nameElement.textContent = participant.displayName + (participant.participantId === selfId ? ' (você)' : '');
     const identity = document.createElement('span');
     identity.className = 'participant-identity';
     identity.append(stateElement, nameElement);
-    item.append(identity);
+    const statusElement = document.createElement('span');
+    statusElement.className = 'participant-status';
+    statusElement.setAttribute('aria-hidden', 'true');
+    statusElement.textContent = state;
+    item.append(identity, statusElement);
     if (participant.participantId !== selfId && participant.connected) {
       const volume = document.createElement('input');
       volume.type = 'range';
@@ -424,7 +555,7 @@ function setSpeakingState(participantId, speaking) {
     .find((candidate) => candidate.dataset.participantRow === participantId);
   if (!item) return;
   item.dataset.speaking = String(speaking);
-  const state = item.querySelector('.participant-state');
+  const state = item.querySelector('.participant-status');
   const participant = currentRoom?.participants.find((entry) => entry.participantId === participantId);
   if (state && participant) {
     state.textContent = speaking ? '●' : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
@@ -888,8 +1019,8 @@ async function createOrJoin(action) {
   elements.join.disabled = true;
   setStatus('Conectando ao servidor…');
   const result = action === 'create'
-    ? await socketClient.createRoom(displayName)
-    : await socketClient.joinRoom(elements.roomCode.value, displayName);
+    ? await socketClient.createRoom(displayName, profileAvatar || null)
+    : await socketClient.joinRoom(elements.roomCode.value, displayName, profileAvatar || null);
   elements.create.disabled = false;
   elements.join.disabled = false;
   if (!result?.ok) {
@@ -1107,6 +1238,8 @@ function bindEvents() {
     showNotice('Código copiado.', 'success');
   });
   elements.copyInvite.addEventListener('click', copyInviteLink);
+  elements.profileBadge?.addEventListener('click', () => elements.profilePhotoInput?.click());
+  elements.profilePhotoInput?.addEventListener('change', handleProfilePhotoChange);
   elements.microphone.addEventListener('click', toggleMicrophone);
   elements.microphoneSelect.addEventListener('change', initializeAudio);
   elements.audioSettingsOpen?.addEventListener('click', openAudioSettings);
@@ -1149,6 +1282,7 @@ function bindEvents() {
   elements.leave.addEventListener('click', leaveRoom);
   elements.name.addEventListener('input', () => {
     try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, elements.name.value); } catch { /* armazenamento opcional */ }
+    renderProfileAvatar();
   });
   document.addEventListener('keydown', handlePttKeyDown);
   document.addEventListener('keydown', (event) => {
@@ -1215,6 +1349,8 @@ function handleSocketEvent(event, payload) {
 
 function bootstrap() {
   loadLocalPreferences();
+  profileAvatar = loadProfileAvatar();
+  renderProfileAvatar();
   syncAudioSettingsControls();
   bindEvents();
   socketClient = new SocketClient({ onEvent: handleSocketEvent });

@@ -9,6 +9,7 @@ const {
   assertResumeToken,
   assertSignalPayload,
   assertTargetParticipant,
+  normalizeAvatar,
   normalizeDisplayName,
   normalizeRoomCode
 } = require('./validation');
@@ -77,7 +78,7 @@ function bindSocket(io, socket) {
     assertPayload(payload);
     if (getBoundParticipant(socket)) throw new Error('ALREADY_IN_ROOM');
     const displayName = normalizeDisplayName(payload.displayName);
-    const created = rooms.createRoom(displayName);
+    const created = rooms.createRoom(displayName, normalizeAvatar(payload.avatar));
     created.participant.socketId = socket.id;
     socket.join(created.room.code);
     socket.data.participantId = created.participant.participantId;
@@ -94,7 +95,7 @@ function bindSocket(io, socket) {
     if (getBoundParticipant(socket)) throw new Error('ALREADY_IN_ROOM');
     const displayName = normalizeDisplayName(payload.displayName);
     const code = normalizeRoomCode(payload.roomCode, config.roomCodeLength);
-    const joined = rooms.joinRoom(code, displayName);
+    const joined = rooms.joinRoom(code, displayName, normalizeAvatar(payload.avatar));
     joined.participant.socketId = socket.id;
     socket.join(code);
     socket.data.participantId = joined.participant.participantId;
@@ -149,6 +150,13 @@ function bindSocket(io, socket) {
     const updated = rooms.setMuted(socket.id, Boolean(payload.muted));
     broadcastRoom(io, updated.room);
     return { muted: updated.participant.muted };
+  }));
+
+  socket.on(EVENTS.PARTICIPANT_PROFILE, withGuard(socket, EVENTS.PARTICIPANT_PROFILE, (payload) => {
+    assertPayload(payload);
+    const updated = rooms.setAvatar(socket.id, normalizeAvatar(payload.avatar));
+    broadcastRoom(io, updated.room);
+    return { avatar: updated.participant.avatar };
   }));
 
   for (const eventName of [EVENTS.PEER_OFFER, EVENTS.PEER_ANSWER, EVENTS.PEER_ICE]) {

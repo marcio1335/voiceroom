@@ -37,14 +37,22 @@ test('cria, entra, limita a sexta pessoa e arbitra duas transmissões', async ()
       return waitForConnect(client);
     }));
 
-    const created = await request(clients[0], 'room:create', { displayName: 'Criador' });
+    const avatar = 'data:image/jpeg;base64,AA==';
+    const created = await request(clients[0], 'room:create', { displayName: 'Criador', avatar });
     assert.equal(created.ok, true);
     const roomCode = created.data.room.code;
+    assert.equal(created.data.room.participants[0].avatar, avatar);
 
     const statePromise = waitForEvent(clients[0], 'room:state');
     const joined = await request(clients[1], 'room:join', { roomCode, displayName: 'Convidado' });
     assert.equal(joined.ok, true);
     assert.equal((await statePromise).room.participants.length, 2);
+
+    const profileStatePromise = waitForEvent(clients[1], 'room:state');
+    const updatedAvatar = 'data:image/jpeg;base64,AAAA';
+    const profileUpdated = await request(clients[0], 'participant:profile', { avatar: updatedAvatar });
+    assert.equal(profileUpdated.ok, true);
+    assert.equal((await profileStatePromise).room.participants[0].avatar, updatedAvatar);
 
     const lock = await request(clients[0], 'screen:start-request');
     assert.equal(lock.ok, true);

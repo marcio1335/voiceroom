@@ -50,16 +50,16 @@ class SocketClient {
     });
   }
 
-  async createRoom(displayName) {
-    const response = await this.request('room:create', { displayName });
+  async createRoom(displayName, avatar = null) {
+    const response = await this.request('room:create', { displayName, avatar });
     if (response?.ok) {
       this.resumeContext = { roomCode: response.data.room.code, resumeToken: response.data.resumeToken };
     }
     return response;
   }
 
-  async joinRoom(roomCode, displayName) {
-    const response = await this.request('room:join', { roomCode, displayName });
+  async joinRoom(roomCode, displayName, avatar = null) {
+    const response = await this.request('room:join', { roomCode, displayName, avatar });
     if (response?.ok) {
       this.resumeContext = { roomCode: response.data.room.code, resumeToken: response.data.resumeToken };
     }
@@ -79,6 +79,10 @@ class SocketClient {
 
   setMuted(muted) {
     return this.request('participant:muted', { muted });
+  }
+
+  setProfileAvatar(avatar) {
+    return this.request('participant:profile', { avatar });
   }
 
   sendSignal(event, targetParticipantId, signal) {

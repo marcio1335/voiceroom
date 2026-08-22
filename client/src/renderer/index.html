@@ -2,7 +2,7 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000 https://voiceroom-signaling.onrender.com wss://voiceroom-signaling.onrender.com; media-src 'self' blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000 https://voiceroom-signaling.onrender.com wss://voiceroom-signaling.onrender.com; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VoiceRoom</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -22,7 +22,8 @@
           <button class="header-icon" type="button" aria-label="Tema atual">☼</button>
           <span id="status" class="status" data-type="info">Conectando ao servidor…</span>
           <span id="latency" class="latency" aria-live="polite">Latência: —</span>
-          <div class="profile-badge" aria-label="Perfil">V</div>
+          <button id="profile-badge" class="profile-badge" type="button" aria-label="Alterar foto de perfil" title="Clique para escolher uma foto de perfil">V</button>
+          <input id="profile-photo-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" />
         </div>
       </header>
 
@@ -32,7 +33,7 @@
         <div class="landing-card card">
           <div class="landing-emblem brand-mark" aria-hidden="true"><img src="../../assets/voice-icon.png" alt="" /></div>
           <div class="landing-lines" aria-hidden="true"><span></span><span></span></div>
-          <div class="landing-avatar" aria-hidden="true">V<span>⌕</span></div>
+          <div id="landing-avatar" class="landing-avatar" aria-hidden="true">V<span>⌕</span></div>
           <h1>Entre em uma sala</h1>
           <p class="muted">Sem cadastro. Escolha um apelido e converse com seus amigos.</p>
           <label class="sr-only" for="display-name">Seu nome</label>

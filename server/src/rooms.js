@@ -31,7 +31,7 @@ class RoomStore {
     this.resumeTimers = new Map();
   }
 
-  createRoom(displayName) {
+  createRoom(displayName, avatar = null) {
     let code;
     for (let attempts = 0; attempts < 20; attempts += 1) {
       const candidate = createRoomCode(this.roomCodeLength);
@@ -43,7 +43,7 @@ class RoomStore {
     if (!code) {
       throw new Error('Não foi possível gerar o código da sala');
     }
-    const participant = this.#newParticipant(displayName);
+    const participant = this.#newParticipant(displayName, avatar);
     const room = {
       code,
       participants: new Map([[participant.participantId, participant]]),
@@ -55,7 +55,7 @@ class RoomStore {
     return { room, participant };
   }
 
-  joinRoom(code, displayName) {
+  joinRoom(code, displayName, avatar = null) {
     const room = this.rooms.get(code);
     if (!room) {
       throw new Error('ROOM_NOT_FOUND');
@@ -63,7 +63,7 @@ class RoomStore {
     if (room.participants.size >= this.maxUsersPerRoom) {
       throw new Error('ROOM_FULL');
     }
-    const participant = this.#newParticipant(displayName);
+    const participant = this.#newParticipant(displayName, avatar);
     room.participants.set(participant.participantId, participant);
     return { room, participant };
   }
@@ -146,6 +146,13 @@ class RoomStore {
     return found;
   }
 
+  setAvatar(socketId, avatar) {
+    const found = this.findBySocket(socketId);
+    if (!found) throw new Error('NOT_IN_ROOM');
+    found.participant.avatar = avatar;
+    return found;
+  }
+
   startScreenShare(socketId) {
     const found = this.findBySocket(socketId);
     if (!found) throw new Error('NOT_IN_ROOM');
@@ -175,6 +182,7 @@ class RoomStore {
       participants: [...room.participants.values()].map((participant) => ({
         participantId: participant.participantId,
         displayName: participant.displayName,
+        avatar: participant.avatar,
         muted: participant.muted,
         screenSharing: participant.screenSharing,
         connected: Boolean(participant.socketId)
@@ -185,11 +193,12 @@ class RoomStore {
     };
   }
 
-  #newParticipant(displayName) {
+  #newParticipant(displayName, avatar = null) {
     return {
       participantId: randomId(),
       resumeToken: randomId(24),
       displayName,
+      avatar,
       socketId: null,
       muted: false,
       screenSharing: false,

@@ -11,6 +11,7 @@ const EVENTS = Object.freeze({
   PEER_ANSWER: 'peer:answer',
   PEER_ICE: 'peer:ice',
   PARTICIPANT_MUTED: 'participant:muted',
+  PARTICIPANT_PROFILE: 'participant:profile',
   SCREEN_START_REQUEST: 'screen:start-request',
   SCREEN_STARTED: 'screen:started',
   SCREEN_STOP: 'screen:stop',

@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { RoomStore, createRoomCode } = require('../server/src/rooms');
-const { normalizeDisplayName, normalizeRoomCode } = require('../server/src/validation');
+const { normalizeAvatar, normalizeDisplayName, normalizeRoomCode } = require('../server/src/validation');
 const { ROOM_CODE_ALPHABET } = require('../shared/config');
 
 test('gera código de sala sem caracteres ambíguos', () => {
@@ -54,4 +54,11 @@ test('normaliza nome e código e rejeita entradas inválidas', () => {
   assert.throws(() => normalizeDisplayName(''), /1 e 30/);
   assert.throws(() => normalizeDisplayName('<script>alert(1)</script>'), /1 e 30/);
   assert.throws(() => normalizeRoomCode('ABC123'), /Código/);
+});
+
+test('aceita apenas miniaturas de perfil em data URL', () => {
+  const avatar = 'data:image/jpeg;base64,AA==';
+  assert.equal(normalizeAvatar(avatar), avatar);
+  assert.equal(normalizeAvatar(null), null);
+  assert.throws(() => normalizeAvatar('https://example.com/avatar.png'), /Foto/);
 });

@@ -1,6 +1,8 @@
 const { ROOM_CODE_ALPHABET } = require('../../shared/config');
 
 const ROOM_CODE_PATTERN = new RegExp(`^[${ROOM_CODE_ALPHABET}]+$`);
+const PROFILE_AVATAR_PATTERN = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const MAX_PROFILE_AVATAR_LENGTH = 32_000;
 
 function normalizeDisplayName(value) {
   if (typeof value !== 'string') {
@@ -22,6 +24,14 @@ function normalizeRoomCode(value, expectedLength = 6) {
     throw new Error('Código de sala inválido');
   }
   return code;
+}
+
+function normalizeAvatar(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || value.length > MAX_PROFILE_AVATAR_LENGTH || !PROFILE_AVATAR_PATTERN.test(value)) {
+    throw new Error('Foto de perfil inválida');
+  }
+  return value;
 }
 
 function assertProtocolVersion(value, expectedVersion) {
@@ -79,6 +89,7 @@ module.exports = {
   assertSignalPayload,
   assertTargetParticipant,
   assertProtocolVersion,
+  normalizeAvatar,
   normalizeDisplayName,
   normalizeRoomCode
 };
