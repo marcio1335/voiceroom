@@ -44,8 +44,8 @@ function sendDeepLink(url) {
 
 function createTray() {
   if (tray) return;
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><rect width="16" height="16" rx="4" fill="#65d7a2"/><path d="M4 4h2.2L8 8.3 9.8 4H12L9.1 11H6.9z" fill="#07150f"/></svg>';
-  const icon = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
+  const iconFile = process.platform === 'win32' ? 'voice-icon.ico' : 'voice-icon.png';
+  const icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', iconFile));
   tray = new Tray(icon);
   tray.setToolTip('VoiceRoom');
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -71,6 +71,7 @@ function createWindow() {
     minWidth: 820,
     minHeight: 620,
     show: false,
+    icon: path.join(__dirname, '..', '..', 'assets', 'voice-icon.png'),
     autoHideMenuBar: true,
     backgroundColor: '#0e1117',
     webPreferences: {

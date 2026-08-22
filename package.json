@@ -34,6 +34,7 @@
   "build": {
     "appId": "com.voiceroom.desktop",
     "productName": "VoiceRoom",
+    "icon": "client/assets/voice-icon.png",
     "directories": {
       "output": "release"
     },
@@ -44,6 +45,7 @@
       "node_modules/socket.io-client/**/*"
     ],
     "win": {
+      "icon": "client/assets/voice-icon.ico",
       "target": "nsis"
     },
     "nsis": {
