@@ -100,11 +100,19 @@
             </div>
           </div>
           <div class="call-controls">
-            <button id="microphone" disabled>Ativar microfone</button>
-            <button id="screen-share">Compartilhar tela</button>
-            <button id="screen-volume" disabled>Volume</button>
-            <button id="screen-fullscreen" disabled>Tela cheia</button>
-            <span id="screen-audio-status" class="small muted">Áudio da tela: desativado</span>
+            <div class="call-action-row">
+              <button id="microphone" disabled>Ativar microfone</button>
+              <button id="screen-share">Compartilhar tela</button>
+              <button id="screen-fullscreen" disabled>Tela cheia</button>
+            </div>
+            <div class="screen-volume-control">
+              <label class="audio-range-label" for="screen-volume">
+                <span>Volume da transmissão</span>
+                <output id="screen-volume-value" for="screen-volume">100%</output>
+              </label>
+              <input id="screen-volume" type="range" min="0" max="100" step="1" value="100" disabled />
+            </div>
+            <span id="screen-audio-status" class="small muted screen-audio-status">Áudio da tela: desativado</span>
           </div>
         </section>
       </section>

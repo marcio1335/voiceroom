@@ -25,6 +25,7 @@ const elements = {
   microphoneTestStatus: document.querySelector('#microphone-test-status'),
   screen: document.querySelector('#screen-share'),
   screenVolume: document.querySelector('#screen-volume'),
+  screenVolumeValue: document.querySelector('#screen-volume-value'),
   screenFullscreen: document.querySelector('#screen-fullscreen'),
   screenAudioStatus: document.querySelector('#screen-audio-status'),
   leave: document.querySelector('#leave-room'),
@@ -44,7 +45,7 @@ let roomCode;
 let currentRoom;
 let muted = false;
 let sharingScreen = false;
-let screenVolumeMuted = false;
+let screenVolumeLevel = 1;
 
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
 const DEFAULT_AUDIO_SETTINGS = Object.freeze({
@@ -266,9 +267,11 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
   video.srcObject = stream;
   video.play().catch(() => {});
   elements.screenStage.dataset.active = 'true';
-  elements.screenVolume.disabled = !stream.getAudioTracks?.().length;
+  const hasScreenAudio = Boolean(stream.getAudioTracks?.().length);
+  elements.screenVolume.disabled = !hasScreenAudio;
+  if (hasScreenAudio) updateScreenVolume();
   elements.screenFullscreen.disabled = false;
-  elements.screenAudioStatus.textContent = stream.getAudioTracks?.().length
+  elements.screenAudioStatus.textContent = hasScreenAudio
     ? 'Áudio do sistema ativo'
     : 'Vídeo compartilhado sem áudio';
 }
@@ -280,18 +283,24 @@ function attachRemoteStream(participantId, track, stream) {
     if (!audio) {
       audio = document.createElement('audio');
       audio.autoplay = true;
-      audio.muted = screenVolumeMuted;
       audio.dataset.participantAudio = `${participantId}-${track.id}`;
       audio.dataset.screenAudio = String(isScreenAudio);
       audio.onended = () => audio.remove();
       document.body.append(audio);
     }
     audio.srcObject = new MediaStream([track]);
-    if (isScreenAudio) elements.screenVolume.disabled = false;
+    if (isScreenAudio) {
+      elements.screenVolume.disabled = false;
+      audio.volume = screenVolumeLevel;
+      audio.muted = screenVolumeLevel === 0;
+      updateScreenVolume();
+    }
     audio.play().catch(() => {});
     return;
   }
-  renderScreenStream(participantId, stream);
+  // O áudio da tela toca em um elemento <audio> separado para que o slider
+  // controle somente a transmissão, sem duplicar o áudio no <video>.
+  renderScreenStream(participantId, stream, { muted: true });
 }
 
 async function toggleScreenFullscreen() {
@@ -314,22 +323,21 @@ function updateFullscreenButton() {
   elements.screenFullscreen.textContent = document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia';
 }
 
-function updateScreenVolumeButton() {
-  elements.screenVolume.textContent = screenVolumeMuted ? 'Ativar volume' : 'Mutar volume';
-  elements.screenVolume.setAttribute('aria-pressed', String(screenVolumeMuted));
-}
-
-function setScreenVolumeMuted(nextMuted) {
-  screenVolumeMuted = Boolean(nextMuted);
+function updateScreenVolume() {
+  const percentage = Math.round(screenVolumeLevel * 100);
+  elements.screenVolume.value = String(percentage);
+  elements.screenVolumeValue.textContent = `${percentage}%`;
   document.querySelectorAll('audio[data-screen-audio="true"]').forEach((audio) => {
-    audio.muted = screenVolumeMuted;
+    audio.volume = screenVolumeLevel;
+    audio.muted = screenVolumeLevel === 0;
   });
-  updateScreenVolumeButton();
 }
 
-function toggleScreenVolume() {
-  if (elements.screenVolume.disabled) return;
-  setScreenVolumeMuted(!screenVolumeMuted);
+function setScreenVolume(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return;
+  screenVolumeLevel = Math.min(100, Math.max(0, numericValue)) / 100;
+  updateScreenVolume();
 }
 
 function removeParticipantMedia(participantId) {
@@ -442,7 +450,6 @@ async function toggleScreen() {
       elements.screenStage.replaceChildren();
       elements.screenStage.dataset.active = 'false';
       elements.screenVolume.disabled = true;
-      setScreenVolumeMuted(false);
       elements.screenFullscreen.disabled = true;
       elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
       renderRoom(currentRoom);
@@ -508,7 +515,6 @@ async function leaveRoom() {
   elements.landing.hidden = false;
   elements.screenStage.replaceChildren();
   elements.screenVolume.disabled = true;
-  setScreenVolumeMuted(false);
   elements.screenFullscreen.disabled = true;
   elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
   setStatus('Pronto para criar ou entrar em uma sala.');
@@ -534,7 +540,7 @@ function bindEvents() {
   elements.microphoneGain.addEventListener('input', readAudioSettingsFromControls);
   elements.testMicrophone.addEventListener('click', toggleMicrophoneLoopback);
   elements.screen.addEventListener('click', toggleScreen);
-  elements.screenVolume.addEventListener('click', toggleScreenVolume);
+  elements.screenVolume.addEventListener('input', () => setScreenVolume(elements.screenVolume.value));
   elements.screenFullscreen.addEventListener('click', toggleScreenFullscreen);
   document.addEventListener('fullscreenchange', updateFullscreenButton);
   elements.leave.addEventListener('click', leaveRoom);
@@ -561,7 +567,6 @@ function handleSocketEvent(event, payload) {
     elements.screenStage.replaceChildren();
     elements.screenStage.dataset.active = 'false';
     elements.screenVolume.disabled = true;
-    setScreenVolumeMuted(false);
     elements.screenFullscreen.disabled = true;
     elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
     if (payload.participantId) {
