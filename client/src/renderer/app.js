@@ -16,8 +16,10 @@ const elements = {
   echoCancellation: document.querySelector('#echo-cancellation'),
   noiseSuppression: document.querySelector('#noise-suppression'),
   autoGainControl: document.querySelector('#auto-gain-control'),
+  processMicrophoneTest: document.querySelector('#process-microphone-test'),
   microphoneGain: document.querySelector('#microphone-gain'),
   microphoneGainValue: document.querySelector('#microphone-gain-value'),
+  audioProcessingStatus: document.querySelector('#audio-processing-status'),
   testMicrophone: document.querySelector('#test-microphone'),
   microphoneLevel: document.querySelector('#microphone-level'),
   microphoneTestStatus: document.querySelector('#microphone-test-status'),
@@ -44,6 +46,7 @@ const DEFAULT_AUDIO_SETTINGS = Object.freeze({
   echoCancellation: true,
   noiseSuppression: true,
   autoGainControl: true,
+  processMicrophoneTest: false,
   inputGain: 1
 });
 
@@ -60,6 +63,7 @@ function loadAudioSettings() {
       echoCancellation: saved.echoCancellation !== false,
       noiseSuppression: saved.noiseSuppression !== false,
       autoGainControl: saved.autoGainControl !== false,
+      processMicrophoneTest: saved.processMicrophoneTest === true,
       inputGain: clampInputGain(saved.inputGain)
     };
   } catch {
@@ -81,6 +85,7 @@ function syncAudioSettingsControls() {
   elements.echoCancellation.checked = audioSettings.echoCancellation;
   elements.noiseSuppression.checked = audioSettings.noiseSuppression;
   elements.autoGainControl.checked = audioSettings.autoGainControl;
+  elements.processMicrophoneTest.checked = audioSettings.processMicrophoneTest;
   elements.microphoneGain.value = String(Math.round(audioSettings.inputGain * 100));
   elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
 }
@@ -90,6 +95,7 @@ function readAudioSettingsFromControls() {
     echoCancellation: elements.echoCancellation.checked,
     noiseSuppression: elements.noiseSuppression.checked,
     autoGainControl: elements.autoGainControl.checked,
+    processMicrophoneTest: elements.processMicrophoneTest.checked,
     inputGain: clampInputGain(Number(elements.microphoneGain.value) / 100)
   };
   elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
@@ -100,6 +106,29 @@ function readAudioSettingsFromControls() {
 function changeAudioProcessing() {
   readAudioSettingsFromControls();
   if (peerManager?.getAudioTrack()) initializeAudio();
+}
+
+async function restartMicrophoneLoopback() {
+  if (!peerManager?.microphoneLoopback) return;
+  await peerManager.stopMicrophoneLoopback((level) => {
+    elements.microphoneLevel.style.width = `${Math.round(level * 100)}%`;
+  });
+  elements.microphoneTestStatus.textContent = 'Retorno reiniciando…';
+  try {
+    await peerManager.startMicrophoneLoopback(
+      elements.microphoneSelect.value || undefined,
+      (level) => { elements.microphoneLevel.style.width = `${Math.round(level * 100)}%`; },
+      audioSettings.inputGain,
+      audioSettings.processMicrophoneTest ? audioSettings : { processed: false }
+    );
+    elements.testMicrophone.textContent = 'Parar retorno';
+    elements.microphoneTestStatus.textContent = audioSettings.processMicrophoneTest
+      ? 'Retorno processado — use fones para evitar microfonia.'
+      : 'Retorno direto — use fones para evitar microfonia.';
+  } catch {
+    elements.testMicrophone.textContent = 'Ouvir microfone';
+    elements.microphoneTestStatus.textContent = 'Não foi possível acessar o microfone.';
+  }
 }
 
 function setStatus(message, type = 'info') {
@@ -201,6 +230,16 @@ async function initializeAudio() {
   try {
     await peerManager.startAudio(elements.microphoneSelect.value || undefined, audioSettings);
     elements.microphone.disabled = false;
+    const processing = peerManager.getAudioProcessingSettings();
+    const unsupported = [
+      ['echoCancellation', 'cancelamento de eco'],
+      ['noiseSuppression', 'supressão de ruído'],
+      ['autoGainControl', 'ganho automático']
+    ].filter(([key]) => processing[key] !== undefined && processing[key] !== audioSettings[key]);
+    elements.audioProcessingStatus.textContent = unsupported.length
+      ? `O dispositivo não confirmou: ${unsupported.map(([, label]) => label).join(', ')}.`
+      : 'Processamento aplicado ao áudio enviado.';
+    elements.audioProcessingStatus.dataset.type = unsupported.length ? 'warning' : 'success';
     setStatus('Microfone conectado.', 'success');
   } catch (error) {
     showNotice('Não foi possível acessar seu microfone. Verifique as permissões do Windows.');
@@ -225,9 +264,13 @@ async function toggleMicrophoneLoopback() {
     await peerManager.startMicrophoneLoopback(
       elements.microphoneSelect.value || undefined,
       (level) => { elements.microphoneLevel.style.width = `${Math.round(level * 100)}%`; },
-      audioSettings.inputGain
+      audioSettings.inputGain,
+      audioSettings.processMicrophoneTest ? audioSettings : { processed: false }
     );
     elements.testMicrophone.textContent = 'Parar retorno';
+    elements.microphoneTestStatus.textContent = audioSettings.processMicrophoneTest
+      ? 'Retorno processado — use fones para evitar microfonia.'
+      : 'Retorno direto — use fones para evitar microfonia.';
   } catch (error) {
     elements.microphoneTestStatus.textContent = 'Não foi possível acessar o microfone.';
     showNotice('Verifique as permissões do Windows e o dispositivo selecionado.');
@@ -364,6 +407,10 @@ function bindEvents() {
   elements.echoCancellation.addEventListener('change', changeAudioProcessing);
   elements.noiseSuppression.addEventListener('change', changeAudioProcessing);
   elements.autoGainControl.addEventListener('change', changeAudioProcessing);
+  elements.processMicrophoneTest.addEventListener('change', async () => {
+    readAudioSettingsFromControls();
+    await restartMicrophoneLoopback();
+  });
   elements.microphoneGain.addEventListener('input', readAudioSettingsFromControls);
   elements.testMicrophone.addEventListener('click', toggleMicrophoneLoopback);
   elements.screen.addEventListener('click', toggleScreen);

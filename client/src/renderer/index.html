@@ -68,12 +68,16 @@
               <input id="auto-gain-control" type="checkbox" checked />
               <span>Ganho automático</span>
             </label>
+            <label class="audio-option">
+              <input id="process-microphone-test" type="checkbox" />
+              <span>Aplicar ao teste de retorno</span>
+            </label>
             <label class="audio-range-label" for="microphone-gain">
               <span>Sensibilidade do microfone</span>
               <output id="microphone-gain-value" for="microphone-gain">100%</output>
             </label>
             <input id="microphone-gain" type="range" min="0" max="200" step="5" value="100" />
-            <span class="small muted audio-help">Aplicado ao áudio enviado. O teste de retorno usa o sinal direto.</span>
+            <span id="audio-processing-status" class="small muted audio-help">O áudio enviado usará as opções acima.</span>
           </section>
           <div class="microphone-test">
             <div class="test-heading">

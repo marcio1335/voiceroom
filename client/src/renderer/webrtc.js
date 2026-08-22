@@ -34,6 +34,18 @@ function getAudioConstraints(deviceId, {
   return audio;
 }
 
+function getAudioProcessingConstraints({
+  echoCancellation = DEFAULT_AUDIO_SETTINGS.echoCancellation,
+  noiseSuppression = DEFAULT_AUDIO_SETTINGS.noiseSuppression,
+  autoGainControl = DEFAULT_AUDIO_SETTINGS.autoGainControl
+} = {}) {
+  return {
+    echoCancellation: Boolean(echoCancellation),
+    noiseSuppression: Boolean(noiseSuppression),
+    autoGainControl: Boolean(autoGainControl)
+  };
+}
+
 function createAudioContext() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return null;
@@ -81,6 +93,17 @@ class PeerManager {
       video: false
     };
     const captureStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const captureTrack = captureStream.getAudioTracks()[0];
+    if (!captureTrack) {
+      stopStream(captureStream);
+      throw new Error('O dispositivo não forneceu uma faixa de áudio.');
+    }
+    try {
+      await captureTrack.applyConstraints(getAudioProcessingConstraints(audioSettings));
+    } catch {
+      // Alguns drivers aceitam a captura, mas não permitem reaplicar as constraints.
+      // O estado efetivo será exposto por getAudioProcessingSettings().
+    }
     let nextStream = captureStream;
     let nextAudioContext = null;
     let nextGainNode = null;
@@ -122,6 +145,11 @@ class PeerManager {
       this.audioGainNode = oldGainNode;
       throw new Error('O dispositivo não forneceu uma faixa de áudio.');
     }
+    try {
+      nextTrack.contentHint = 'speech';
+    } catch {
+      // contentHint pode não existir em versões antigas do Chromium.
+    }
     nextTrack.enabled = !this.muted;
 
     for (const peer of this.peers.values()) {
@@ -143,12 +171,33 @@ class PeerManager {
     return this.audioStream?.getAudioTracks()[0] || null;
   }
 
-  async startMicrophoneLoopback(deviceId, onLevel = () => {}, inputGain = 1) {
+  getAudioProcessingSettings() {
+    const track = this.audioCaptureStream?.getAudioTracks()[0];
+    return track?.getSettings?.() || {};
+  }
+
+  async startMicrophoneLoopback(deviceId, onLevel = () => {}, inputGain = 1, processingSettings = {}) {
     if (this.microphoneLoopback) return;
+    const processed = processingSettings.processed === true || processingSettings.processMicrophoneTest === true;
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: getAudioConstraints(deviceId, { processed: false }),
+      audio: getAudioConstraints(deviceId, {
+        ...processingSettings,
+        processed
+      }),
       video: false
     });
+    const captureTrack = stream.getAudioTracks()[0];
+    if (!captureTrack) {
+      stopStream(stream);
+      throw new Error('O dispositivo não forneceu uma faixa de áudio.');
+    }
+    if (processed) {
+      try {
+        await captureTrack.applyConstraints(getAudioProcessingConstraints(processingSettings));
+      } catch {
+        // O retorno continua disponível mesmo quando o driver ignora uma opção.
+      }
+    }
     const audioContext = createAudioContext();
     if (!audioContext) {
       stopStream(stream);

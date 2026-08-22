@@ -69,6 +69,8 @@ label { display: block; margin-bottom: 8px; color: #d7dfeb; font-size: 13px; fon
 .audio-range-label output { color: var(--primary); font-variant-numeric: tabular-nums; }
 .audio-settings input[type="range"] { width: 100%; height: 18px; margin: 0; padding: 0; accent-color: var(--primary); background: transparent; }
 .audio-help { line-height: 1.35; }
+.audio-help[data-type="success"] { color: var(--primary); }
+.audio-help[data-type="warning"] { color: #f3c66b; }
 .microphone-test { display: grid; gap: 8px; margin-bottom: 14px; }
 .test-heading { display: flex; align-items: center; justify-content: space-between; }
 .meter { height: 6px; overflow: hidden; border-radius: 99px; background: #0c1118; }
