@@ -121,10 +121,6 @@ h2 { margin-bottom: 7px; font-size: 17px; }
 .participant[data-speaking="true"] .participant-state { border: 2px solid var(--speaking); color: var(--speaking); background: #213329; box-shadow: 0 0 0 3px #70dfa022, 0 0 14px #70dfa044; animation: speaking-pulse 1.25s ease-in-out infinite; }
 .participant-volume { width: 48px; height: 14px; margin: 0; padding: 0; accent-color: #d7d7df; background: transparent; }
 @keyframes speaking-pulse { 0%, 100% { box-shadow: 0 0 0 2px #70dfa01a, 0 0 8px #70dfa033; } 50% { box-shadow: 0 0 0 4px #70dfa033, 0 0 16px #70dfa055; } }
-.vacancies-heading { display: flex; justify-content: space-between; margin: 27px 3px 10px; color: #777782; font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-.vacancies { display: grid; gap: 10px; }
-.vacancies i { display: block; width: 100%; height: 7px; border: 1px dashed #41414a; border-radius: 99px; opacity: .7; }
-.vacancies i:last-child { width: 75%; }
 .sidebar-bottom { display: grid; gap: 9px; border-top: 1px solid #303038; padding: 14px 16px 16px; }
 .sidebar-action-row { display: flex; align-items: center; gap: 9px; }
 .sidebar-action { width: 34px; height: 30px; padding: 0; color: #c4c4cd; background: #24242b; font-size: 16px; }
@@ -222,7 +218,6 @@ h2 { margin-bottom: 7px; font-size: 17px; }
   .room-layout { grid-template-columns: 1fr; min-height: auto; }
   .room-sidebar { min-height: auto; }
   .room-sidebar-top { padding-bottom: 12px; }
-  .vacancies-heading, .vacancies { display: none; }
   .sidebar-bottom { grid-template-columns: 1fr 1fr; align-items: center; }
   .leave-button { width: auto; }
   .call-card { min-height: 600px; padding: 13px; }
