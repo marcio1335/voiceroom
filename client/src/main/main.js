@@ -71,6 +71,7 @@ function createWindow() {
     minWidth: 820,
     minHeight: 620,
     show: false,
+    autoHideMenuBar: true,
     backgroundColor: '#0e1117',
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
@@ -80,6 +81,8 @@ function createWindow() {
       webSecurity: true
     }
   });
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.removeMenu?.();
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -106,6 +109,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   app.setAsDefaultProtocolClient('voiceroom');
+  Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === 'media' || permission === 'display-capture' || permission === 'fullscreen');
   });
