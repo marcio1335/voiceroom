@@ -49,7 +49,8 @@ let muted = false;
 let sharingScreen = false;
 let screenVolumeLevel = 1;
 let selectedScreenParticipantId = null;
-const watchingScreenIds = new Set();
+let watchingScreenParticipantId = null;
+let screenWatchActionInProgress = false;
 const screenAudioSourceIds = new Set();
 
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
@@ -241,11 +242,10 @@ function renderRoom(room) {
   const screenParticipantIds = getScreenParticipantIds(room);
   elements.screen.disabled = !sharingScreen && screenParticipantIds.length >= 2;
   elements.screen.textContent = sharingScreen ? 'Parar tela' : 'Compartilhar tela';
-  for (const participantId of [...watchingScreenIds]) {
-    if (!screenParticipantIds.includes(participantId)) {
-      watchingScreenIds.delete(participantId);
-      removeScreenStream(participantId);
-    }
+  if (watchingScreenParticipantId && !screenParticipantIds.includes(watchingScreenParticipantId)) {
+    const stoppedParticipantId = watchingScreenParticipantId;
+    watchingScreenParticipantId = null;
+    removeScreenStream(stoppedParticipantId);
   }
   renderScreenShareList(room);
   renderParticipants();
@@ -257,6 +257,12 @@ function renderScreenShareList(room) {
   const activeParticipants = (room?.participants || []).filter((participant) => (
     participant.screenSharing || (participant.participantId === selfId && sharingScreen)
   ));
+  if (activeParticipants.some((participant) => participant.participantId !== selfId)) {
+    const hint = document.createElement('span');
+    hint.className = 'screen-share-hint small muted';
+    hint.textContent = 'Você pode assistir a uma transmissão por vez.';
+    elements.screenShareList.append(hint);
+  }
   for (const participant of activeParticipants) {
     if (participant.participantId === selfId) {
       const status = document.createElement('span');
@@ -265,10 +271,11 @@ function renderScreenShareList(room) {
       elements.screenShareList.append(status);
       continue;
     }
-    const watching = watchingScreenIds.has(participant.participantId);
+    const watching = watchingScreenParticipantId === participant.participantId;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'screen-share-option';
+    button.disabled = screenWatchActionInProgress;
     button.setAttribute('aria-pressed', String(watching));
     button.textContent = watching
       ? `Parar de assistir — ${participant.displayName}`
@@ -299,6 +306,11 @@ function enterRoom(result) {
 }
 
 function renderScreenStream(participantId, stream, { muted = false } = {}) {
+  // A viewer can keep only one screen on the stage. A new stream replaces the
+  // previous tile, which also covers switching between two active presenters.
+  document.querySelectorAll('[data-screen-tile]').forEach((otherTile) => {
+    if (otherTile.dataset.screenTile !== participantId) removeScreenStream(otherTile.dataset.screenTile);
+  });
   let tile = document.querySelector(`[data-screen-tile="${participantId}"]`);
   let video = tile?.querySelector('[data-participant-video]');
   if (!tile) {
@@ -335,6 +347,7 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
 function attachRemoteStream(participantId, track, stream) {
   if (track.kind === 'audio') {
     const isScreenAudio = Boolean(stream.getVideoTracks?.().length);
+    if (isScreenAudio && watchingScreenParticipantId !== participantId) return;
     let audio = document.querySelector(`[data-participant-audio="${participantId}-${track.id}"]`);
     if (!audio) {
       audio = document.createElement('audio');
@@ -358,6 +371,7 @@ function attachRemoteStream(participantId, track, stream) {
   }
   // O áudio da tela toca em um elemento <audio> separado para que o slider
   // controle somente a transmissão, sem duplicar o áudio no <video>.
+  if (watchingScreenParticipantId !== participantId) return;
   renderScreenStream(participantId, stream, { muted: true });
 }
 
@@ -444,22 +458,38 @@ function setScreenVolume(value) {
 }
 
 async function toggleScreenWatching(participantId) {
-  if (!peerManager || participantId === selfId) return;
-  const watching = watchingScreenIds.has(participantId);
-  const response = watching
-    ? await socketClient.unsubscribeScreen(participantId)
-    : await socketClient.subscribeScreen(participantId);
-  if (!response?.ok) {
-    showNotice(responseError(response));
-    return;
+  if (!peerManager || participantId === selfId || screenWatchActionInProgress) return;
+  screenWatchActionInProgress = true;
+  try {
+    const previousParticipantId = watchingScreenParticipantId;
+    if (previousParticipantId === participantId) {
+      const response = await socketClient.unsubscribeScreen(participantId);
+      if (!response?.ok) {
+        showNotice(responseError(response));
+        return;
+      }
+      watchingScreenParticipantId = null;
+      removeScreenStream(participantId);
+      return;
+    }
+
+    // Subscribe to the new stream first. If it fails, the current stream
+    // remains visible instead of leaving the viewer with a blank stage.
+    const subscribeResponse = await socketClient.subscribeScreen(participantId);
+    if (!subscribeResponse?.ok) {
+      showNotice(responseError(subscribeResponse));
+      return;
+    }
+    watchingScreenParticipantId = participantId;
+    if (previousParticipantId) {
+      removeScreenStream(previousParticipantId);
+      const unsubscribeResponse = await socketClient.unsubscribeScreen(previousParticipantId);
+      if (!unsubscribeResponse?.ok) showNotice(responseError(unsubscribeResponse));
+    }
+  } finally {
+    screenWatchActionInProgress = false;
+    if (currentRoom) renderScreenShareList(currentRoom);
   }
-  if (watching) {
-    watchingScreenIds.delete(participantId);
-    removeScreenStream(participantId);
-  } else {
-    watchingScreenIds.add(participantId);
-  }
-  renderScreenShareList(currentRoom);
 }
 
 function removeParticipantMedia(participantId) {
@@ -629,7 +659,8 @@ async function leaveRoom() {
   roomCode = null;
   currentRoom = null;
   sharingScreen = false;
-  watchingScreenIds.clear();
+  watchingScreenParticipantId = null;
+  screenWatchActionInProgress = false;
   screenAudioSourceIds.clear();
   selectedScreenParticipantId = null;
   elements.room.hidden = true;
@@ -701,7 +732,7 @@ function handleSocketEvent(event, payload) {
   }
   if (event === 'screen:stopped') {
     if (payload.participantId) {
-      watchingScreenIds.delete(payload.participantId);
+      if (watchingScreenParticipantId === payload.participantId) watchingScreenParticipantId = null;
       removeScreenStream(payload.participantId);
     }
     if (payload.participantId === selfId) sharingScreen = false;
