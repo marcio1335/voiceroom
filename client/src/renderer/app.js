@@ -12,6 +12,7 @@ const elements = {
   copy: document.querySelector('#copy-room-code'),
   copyInvite: document.querySelector('#copy-invite-link'),
   participants: document.querySelector('#participants'),
+  callParticipantGrid: document.querySelector('#call-participant-grid'),
   microphone: document.querySelector('#microphone'),
   microphoneSelect: document.querySelector('#microphone-select'),
   echoCancellation: document.querySelector('#echo-cancellation'),
@@ -26,6 +27,11 @@ const elements = {
   testMicrophone: document.querySelector('#test-microphone'),
   microphoneLevel: document.querySelector('#microphone-level'),
   microphoneTestStatus: document.querySelector('#microphone-test-status'),
+  audioSettingsOpen: document.querySelector('#audio-settings-open'),
+  audioSettingsModal: document.querySelector('#audio-settings-modal'),
+  audioSettingsClose: document.querySelector('#audio-settings-close'),
+  audioSettingsApply: document.querySelector('#audio-settings-apply'),
+  audioSettingsReset: document.querySelector('#audio-settings-reset'),
   screen: document.querySelector('#screen-share'),
   screenVolume: document.querySelector('#screen-volume'),
   screenVolumeValue: document.querySelector('#screen-volume-value'),
@@ -250,6 +256,31 @@ async function changeAudioProcessing() {
   }
 }
 
+function openAudioSettings() {
+  if (!elements.audioSettingsModal) return;
+  elements.audioSettingsModal.hidden = false;
+  elements.audioSettingsClose?.focus();
+}
+
+function closeAudioSettings() {
+  if (!elements.audioSettingsModal) return;
+  elements.audioSettingsModal.hidden = true;
+  capturingPttKey = false;
+  elements.pushToTalkKey.textContent = formatPttKey(audioSettings.pushToTalkKey);
+}
+
+async function resetAudioSettings() {
+  audioSettings = { ...DEFAULT_AUDIO_SETTINGS };
+  syncAudioSettingsControls();
+  peerManager?.setInputGain(audioSettings.inputGain);
+  if (peerManager?.getAudioTrack()) {
+    await peerManager.setAudioProcessing(audioSettings).catch(() => {});
+    renderAudioProcessingStatus(peerManager.getAudioProcessingSettings());
+  }
+  persistAudioSettings();
+  showNotice('Configurações de áudio restauradas.', 'success');
+}
+
 async function restartMicrophoneLoopback() {
   if (!peerManager?.microphoneLoopback) return;
   await peerManager.stopMicrophoneLoopback((level) => {
@@ -276,6 +307,12 @@ async function restartMicrophoneLoopback() {
 function setStatus(message, type = 'info') {
   elements.status.textContent = message;
   elements.status.dataset.type = type;
+}
+
+function setActiveNav(step) {
+  document.querySelectorAll('[data-nav-step]').forEach((item) => {
+    item.classList.toggle('is-active', item.dataset.navStep === step);
+  });
 }
 
 function updateLatencyLabel(value) {
@@ -351,6 +388,7 @@ function getScreenParticipantIds(room) {
 
 function renderParticipants() {
   elements.participants.replaceChildren();
+  renderCallParticipantGrid();
   if (!currentRoom) return;
   for (const participant of currentRoom.participants) {
     const item = document.createElement('li');
@@ -387,6 +425,30 @@ function renderParticipants() {
   }
 }
 
+function renderCallParticipantGrid() {
+  if (!elements.callParticipantGrid) return;
+  elements.callParticipantGrid.replaceChildren();
+  if (!currentRoom) return;
+  for (const participant of currentRoom.participants) {
+    const card = document.createElement('article');
+    card.className = 'call-participant-card';
+    card.dataset.callParticipant = participant.participantId;
+    card.dataset.speaking = String(speakingParticipants.has(participant.participantId));
+    const avatar = document.createElement('span');
+    avatar.className = 'call-participant-avatar';
+    avatar.textContent = participant.displayName.trim().slice(0, 1).toUpperCase() || '?';
+    const name = document.createElement('span');
+    name.className = 'call-participant-name';
+    name.textContent = participant.displayName + (participant.participantId === selfId ? ' (você)' : '');
+    const state = document.createElement('span');
+    state.className = 'call-participant-state';
+    state.setAttribute('aria-hidden', 'true');
+    state.textContent = speakingParticipants.has(participant.participantId) ? '🔊' : participant.muted ? '⌁' : '•';
+    card.append(avatar, name, state);
+    elements.callParticipantGrid.append(card);
+  }
+}
+
 function setSpeakingState(participantId, speaking) {
   if (speaking) speakingParticipants.add(participantId);
   else speakingParticipants.delete(participantId);
@@ -398,6 +460,13 @@ function setSpeakingState(participantId, speaking) {
   const participant = currentRoom?.participants.find((entry) => entry.participantId === participantId);
   if (state && participant) {
     state.textContent = speaking ? '🔊' : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
+  }
+  const callCard = [...document.querySelectorAll('[data-call-participant]')]
+    .find((candidate) => candidate.dataset.callParticipant === participantId);
+  if (callCard) {
+    callCard.dataset.speaking = String(speaking);
+    const callState = callCard.querySelector('.call-participant-state');
+    if (callState && participant) callState.textContent = speaking ? '🔊' : participant.muted ? '⌁' : '•';
   }
 }
 
@@ -514,6 +583,7 @@ function enterRoom(result) {
   roomCode = result.data.room.code;
   elements.landing.hidden = true;
   elements.room.hidden = false;
+  setActiveNav('call');
   setStatus('Sala pronta. Ative o microfone quando quiser.', 'success');
   renderRoom(result.data.room);
   peerManager = new PeerManager({
@@ -928,6 +998,7 @@ async function chooseScreenSource() {
 
 async function leaveRoom() {
   try { await socketClient.leaveRoom(); } catch { /* conexão já pode ter caído */ }
+  closeAudioSettings();
   peerManager?.close();
   stopAllSpeakingMonitors();
   stopLatencyMonitoring();
@@ -942,6 +1013,7 @@ async function leaveRoom() {
   selectedScreenParticipantId = null;
   elements.room.hidden = true;
   elements.landing.hidden = false;
+  setActiveNav('entry');
   elements.screenStage.querySelectorAll('[data-screen-tile]').forEach((tile) => tile.remove());
   elements.screenStage.querySelectorAll('[data-participant-audio]').forEach((audio) => audio.remove());
   elements.screenEmptyStage.hidden = false;
@@ -1047,6 +1119,16 @@ function bindEvents() {
   elements.copyInvite.addEventListener('click', copyInviteLink);
   elements.microphone.addEventListener('click', toggleMicrophone);
   elements.microphoneSelect.addEventListener('change', initializeAudio);
+  elements.audioSettingsOpen?.addEventListener('click', openAudioSettings);
+  elements.audioSettingsClose?.addEventListener('click', closeAudioSettings);
+  elements.audioSettingsApply?.addEventListener('click', async () => {
+    await changeAudioProcessing();
+    closeAudioSettings();
+  });
+  elements.audioSettingsReset?.addEventListener('click', resetAudioSettings);
+  elements.audioSettingsModal?.addEventListener('click', (event) => {
+    if (event.target === elements.audioSettingsModal) closeAudioSettings();
+  });
   elements.echoCancellation.addEventListener('change', changeAudioProcessing);
   elements.noiseSuppression.addEventListener('change', changeAudioProcessing);
   elements.autoGainControl.addEventListener('change', changeAudioProcessing);
@@ -1079,6 +1161,9 @@ function bindEvents() {
     try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, elements.name.value); } catch { /* armazenamento opcional */ }
   });
   document.addEventListener('keydown', handlePttKeyDown);
+  document.addEventListener('keydown', (event) => {
+    if (event.code === 'Escape' && !capturingPttKey) closeAudioSettings();
+  });
   document.addEventListener('keyup', handlePttKeyUp);
   window.addEventListener('blur', releasePtt);
   window.voiceRoom?.onDeepLink?.(handleDeepLink);

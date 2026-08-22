@@ -8,118 +8,128 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <main class="app-shell">
       <header class="app-header">
-        <div>
-          <p class="eyebrow">VOICE ROOM</p>
-          <h1>Converse sem complicação.</h1>
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <div class="brand-copy">
+            <strong>voiceroom</strong>
+            <span>converse sem complicação</span>
+          </div>
         </div>
-        <div class="header-status">
+
+        <nav class="top-nav" aria-label="Navegação principal">
+          <span class="nav-step is-active" data-nav-step="entry"><b>01</b> entrada</span>
+          <span class="nav-step" data-nav-step="lobby"><b>02</b> lobby</span>
+          <span class="nav-step" data-nav-step="call"><b>03</b> chamada</span>
+          <span class="nav-step" data-nav-step="screen"><b>04</b> tela</span>
+          <span class="nav-step" data-nav-step="chat"><b>05</b> chat</span>
+          <span class="nav-step" data-nav-step="states"><b>06</b> estados</span>
+        </nav>
+
+        <div class="header-tools">
+          <button class="header-icon" type="button" aria-label="Tema atual">☼</button>
           <span id="status" class="status" data-type="info">Conectando ao servidor…</span>
           <span id="latency" class="latency" aria-live="polite">Latência: —</span>
+          <div class="profile-badge" aria-label="Perfil">V</div>
         </div>
       </header>
 
       <div id="notice" class="notice" role="alert" hidden></div>
 
-      <section id="landing" class="card landing-card">
-        <h2>Começar uma sala</h2>
-        <p class="muted">Escolha um apelido temporário. Nenhum cadastro é necessário.</p>
-        <label for="display-name">Seu nome</label>
-        <input id="display-name" maxlength="30" autocomplete="off" placeholder="Ex.: Marcio" />
-        <div class="landing-actions">
-          <button id="create-room" class="primary">Criar sala</button>
-          <div class="join-inline">
-            <input id="room-code" maxlength="6" autocomplete="off" placeholder="Código" aria-label="Código da sala" />
+      <section id="landing" class="landing-screen">
+        <div class="landing-card card">
+          <div class="landing-emblem brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <div class="landing-lines" aria-hidden="true"><span></span><span></span></div>
+          <div class="landing-avatar" aria-hidden="true">V<span>⌕</span></div>
+          <h1>Entre em uma sala</h1>
+          <p class="muted">Sem cadastro. Escolha um apelido e converse com seus amigos.</p>
+          <label class="sr-only" for="display-name">Seu nome</label>
+          <div class="input-with-icon">
+            <span aria-hidden="true">♙</span>
+            <input id="display-name" maxlength="30" autocomplete="off" placeholder="Seu nome" />
+          </div>
+          <button id="create-room" class="primary landing-primary">Criar sala</button>
+          <div class="or-divider"><span>ou</span></div>
+          <div class="landing-join">
+            <label class="sr-only" for="room-code">Código da sala</label>
+            <input id="room-code" maxlength="6" autocomplete="off" placeholder="CÓDIGO" aria-label="Código da sala" />
             <button id="join-room">Entrar</button>
+          </div>
+          <div class="landing-trust">
+            <span>♙<small>sem cadastro</small></span>
+            <span>◷<small>sala efêmera</small></span>
+            <span>⌁<small>P2P direto</small></span>
           </div>
         </div>
       </section>
 
       <section id="room" class="room-layout" hidden>
-        <aside class="card room-sidebar">
-          <div class="room-code-row">
-            <div>
-              <span class="muted small">Sala</span>
-              <strong id="active-room-code">------</strong>
+        <nav class="room-rail" aria-label="Atalhos da sala">
+          <div class="room-rail-logo brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <button type="button" class="rail-button is-active" aria-label="Sala">⌂</button>
+          <button type="button" class="rail-button" aria-label="Tela">▣</button>
+          <button type="button" class="rail-button" aria-label="Chat">◌</button>
+          <span class="rail-spacer"></span>
+          <button type="button" class="rail-button" aria-label="Preferências">☷</button>
+        </nav>
+        <aside class="room-sidebar card">
+          <div class="room-sidebar-top">
+            <div class="room-code-row">
+              <div>
+                <span class="muted small">Sala</span>
+                <strong id="active-room-code">------</strong>
+              </div>
+              <div class="room-code-actions">
+                <button id="copy-room-code" class="icon-button" title="Copiar código" aria-label="Copiar código">⧉</button>
+                <button id="copy-invite-link" class="icon-button" title="Copiar link de convite" aria-label="Copiar link">↗</button>
+              </div>
             </div>
-            <div class="room-code-actions">
-              <button id="copy-room-code" class="icon-button" title="Copiar código" aria-label="Copiar código">Copiar</button>
-              <button id="copy-invite-link" class="icon-button" title="Copiar link de convite">Link</button>
-            </div>
-          </div>
-          <div class="divider"></div>
-          <div class="section-heading">
-            <h2>Participantes</h2>
-            <span class="pill">máx. 5</span>
-          </div>
-          <ul id="participants" class="participants"></ul>
-          <div class="sidebar-spacer"></div>
-          <label class="small muted" for="microphone-select">Microfone</label>
-          <select id="microphone-select"><option value="">Padrão do Windows</option></select>
-          <section class="audio-settings" aria-labelledby="audio-settings-title">
+            <div class="sidebar-divider"></div>
             <div class="section-heading">
-              <h2 id="audio-settings-title">Áudio</h2>
-              <span class="pill">ajustes</span>
+              <h2>Na sala</h2>
+              <span class="pill">máx. 5</span>
             </div>
-            <label class="audio-option">
-              <input id="echo-cancellation" type="checkbox" checked />
-              <span>Cancelamento de eco</span>
-            </label>
-            <label class="audio-option">
-              <input id="noise-suppression" type="checkbox" checked />
-              <span>Supressão de ruído</span>
-            </label>
-            <label class="audio-option">
-              <input id="auto-gain-control" type="checkbox" checked />
-              <span>Ganho automático</span>
-            </label>
-            <label class="audio-option">
-              <input id="process-microphone-test" type="checkbox" />
-              <span>Aplicar ao teste de retorno</span>
-            </label>
-            <label class="audio-option">
-              <input id="push-to-talk" type="checkbox" />
-              <span>Pressionar para falar</span>
-            </label>
-            <div class="ptt-key-row">
-              <span class="small muted">Tecla do PTT</span>
-              <button id="push-to-talk-key" type="button" class="key-button">Barra de espaço</button>
-            </div>
-            <label class="audio-range-label" for="microphone-gain">
-              <span>Sensibilidade do microfone</span>
-              <output id="microphone-gain-value" for="microphone-gain">100%</output>
-            </label>
-            <input id="microphone-gain" type="range" min="0" max="200" step="5" value="100" />
-            <span id="audio-processing-status" class="small muted audio-help">O áudio enviado usará as opções acima.</span>
-          </section>
-          <div class="microphone-test">
-            <div class="test-heading">
-              <span class="small muted">Teste de retorno</span>
-              <span class="small muted">tempo real</span>
-            </div>
-            <div class="meter" aria-label="Nível do microfone"><span id="microphone-level"></span></div>
-            <button id="test-microphone" class="ghost">Ouvir microfone</button>
-            <span id="microphone-test-status" class="small muted">Use fones para evitar microfonia.</span>
+            <ul id="participants" class="participants"></ul>
+            <div class="vacancies-heading"><span>Vagas</span><span aria-hidden="true">+</span></div>
+            <div class="vacancies" aria-hidden="true"><i></i><i></i></div>
           </div>
-          <button id="leave-room" class="danger ghost">Sair da sala</button>
+
+          <div class="sidebar-bottom">
+            <div class="sidebar-action-row">
+              <button id="audio-settings-open" class="sidebar-action" type="button" title="Configurações de áudio" aria-label="Configurações de áudio">☷</button>
+              <span class="sidebar-hint">Áudio e chamada</span>
+            </div>
+            <button id="leave-room" class="leave-button ghost">Sair da sala</button>
+          </div>
         </aside>
 
-        <section class="card call-card">
+        <section class="call-card card">
+          <div class="call-heading">
+            <div>
+              <span class="eyebrow">03 / CHAMADA</span>
+              <h2>Conversa em andamento</h2>
+            </div>
+            <span class="call-live"><i></i> ao vivo</span>
+          </div>
+
+          <div id="call-participant-grid" class="call-participant-grid" aria-live="polite"></div>
+
           <div id="screen-stage" class="screen-stage" data-active="false">
             <div id="screen-empty-stage" class="empty-stage">
-              <span class="stage-icon">🖥</span>
+              <span class="stage-chip">▣&nbsp; sem tela</span>
               <strong>Nenhuma transmissão em exibição</strong>
               <span class="muted">Escolha uma transmissão abaixo para assistir.</span>
             </div>
           </div>
+
           <div class="call-controls">
             <div class="call-action-row">
-              <button id="microphone" disabled>Ativar microfone</button>
-              <button id="screen-share">Compartilhar tela</button>
-              <button id="screen-fullscreen" disabled>Tela cheia</button>
+              <button id="microphone" disabled><span class="button-icon">♩</span> Ativar microfone</button>
+              <button id="screen-share"><span class="button-icon">▣</span> Compartilhar tela</button>
+              <button id="screen-fullscreen" disabled><span class="button-icon">⛶</span> Tela cheia</button>
             </div>
-            <button id="reconnect-call" class="ghost reconnect-button" hidden>Reconectar chamadas</button>
+            <button id="reconnect-call" class="ghost reconnect-button" hidden>↻ &nbsp;Reconectar chamadas</button>
             <div id="screen-share-list" class="screen-share-list" aria-live="polite"></div>
             <div class="screen-volume-control">
               <label class="audio-range-label" for="screen-volume">
@@ -134,8 +144,11 @@
       </section>
 
       <section id="source-picker" class="source-picker" hidden aria-labelledby="source-picker-title">
-        <div class="source-picker-card">
-          <h2 id="source-picker-title">Escolha o que compartilhar</h2>
+        <div class="source-picker-card modal-card">
+          <div class="modal-header">
+            <div><span class="eyebrow">04 / TELA</span><h2 id="source-picker-title">Escolha o que compartilhar</h2></div>
+            <button id="cancel-source" class="modal-close ghost" type="button" aria-label="Cancelar">×</button>
+          </div>
           <p class="muted">Selecione uma janela ou monitor. A qualidade menor economiza banda.</p>
           <div id="source-list" class="source-list"></div>
           <label class="small muted" for="screen-quality">Qualidade da transmissão</label>
@@ -145,10 +158,46 @@
           </select>
           <label class="screen-audio-option" for="include-screen-audio">
             <input id="include-screen-audio" type="checkbox">
-            <span>Incluir áudio do sistema (todos os aplicativos)</span>
+            <span>Incluir áudio do sistema</span>
           </label>
           <p class="screen-audio-note muted">O áudio do sistema pode incluir o Discord e outros aplicativos. Deixe desmarcado para evitar eco.</p>
-          <button id="cancel-source" class="ghost">Cancelar</button>
+        </div>
+      </section>
+
+      <section id="audio-settings-modal" class="modal-overlay" hidden aria-labelledby="audio-settings-title">
+        <div class="modal-card audio-modal" role="dialog" aria-modal="true">
+          <div class="modal-header">
+            <div><span class="eyebrow">AJUSTES</span><h2 id="audio-settings-title">Áudio</h2></div>
+            <button id="audio-settings-close" class="modal-close ghost" type="button" aria-label="Fechar">×</button>
+          </div>
+          <div class="settings-tabs" role="tablist" aria-label="Modo de áudio">
+            <button type="button" class="settings-tab">Simples</button>
+            <button type="button" class="settings-tab is-active">Avançado</button>
+          </div>
+          <div class="settings-section">
+            <div class="settings-section-title">⌁ &nbsp; DISPOSITIVOS</div>
+            <label class="small muted" for="microphone-select">Entrada</label>
+            <select id="microphone-select"><option value="">Padrão do Windows</option></select>
+          </div>
+          <section class="audio-settings" aria-labelledby="audio-processing-title">
+            <div class="settings-section-title" id="audio-processing-title">◌ &nbsp; PROCESSAMENTO</div>
+            <label class="audio-option"><input id="echo-cancellation" type="checkbox" checked /><span>Cancelamento de eco</span></label>
+            <label class="audio-option"><input id="noise-suppression" type="checkbox" checked /><span>Supressão de ruído</span></label>
+            <label class="audio-option"><input id="auto-gain-control" type="checkbox" checked /><span>Ganho automático</span></label>
+            <label class="audio-option"><input id="process-microphone-test" type="checkbox" /><span>Aplicar ao teste de retorno</span></label>
+            <label class="audio-option"><input id="push-to-talk" type="checkbox" /><span>Pressionar para falar</span></label>
+            <div class="ptt-key-row"><span class="small muted">Tecla do PTT</span><button id="push-to-talk-key" type="button" class="key-button">Barra de espaço</button></div>
+            <label class="audio-range-label" for="microphone-gain"><span>Sensibilidade do microfone</span><output id="microphone-gain-value" for="microphone-gain">100%</output></label>
+            <input id="microphone-gain" type="range" min="0" max="200" step="5" value="100" />
+            <span id="audio-processing-status" class="small muted audio-help">O áudio enviado usará as opções acima.</span>
+          </section>
+          <section class="microphone-test settings-section">
+            <div class="test-heading"><span class="settings-section-title">◷ &nbsp; TESTE DE RETORNO</span><span class="small muted">tempo real</span></div>
+            <div class="meter" aria-label="Nível do microfone"><span id="microphone-level"></span></div>
+            <button id="test-microphone" class="ghost">Ouvir microfone</button>
+            <span id="microphone-test-status" class="small muted">Use fones para evitar microfonia.</span>
+          </section>
+          <div class="settings-footer"><button id="audio-settings-reset" class="ghost" type="button">Restaurar padrão</button><button id="audio-settings-apply" class="primary" type="button">Aplicar</button></div>
         </div>
       </section>
     </main>
