@@ -78,7 +78,7 @@ Dentro de uma sala, selecione o dispositivo e use **Ouvir microfone**. O app lig
 
 ## Ajustes de áudio
 
-Na seção **Áudio** da sala, é possível ativar ou desativar separadamente o cancelamento de eco, a supressão de ruído e o ganho automático. O controle **Sensibilidade do microfone** aplica ganho de 0% a 200% ao áudio enviado aos participantes. O retorno local permanece direto para evitar cortes; marque **Aplicar ao teste de retorno** quando quiser testar também o processamento. Essas preferências ficam salvas localmente neste computador e podem ser alteradas durante a chamada; se o som começar a cortar, experimente desativar o cancelamento de eco ou reduzir o ganho.
+Na seção **Áudio** da sala, é possível ativar ou desativar separadamente o cancelamento de eco, a supressão de ruído e o ganho automático. Essas três opções são aplicadas ao vivo na faixa de captura da chamada, sem recriar o microfone. O controle **Sensibilidade do microfone** aplica ganho de 0% a 200% ao áudio enviado aos participantes. O retorno local permanece direto para evitar cortes; marque **Aplicar ao teste de retorno** quando quiser testar também o processamento. Essas preferências ficam salvas localmente neste computador e podem ser alteradas durante a chamada; se o som começar a cortar, experimente desativar o cancelamento de eco ou reduzir o ganho.
 
 ## Limitações conhecidas do MVP
 

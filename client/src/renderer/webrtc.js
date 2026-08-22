@@ -46,6 +46,39 @@ function getAudioProcessingConstraints({
   };
 }
 
+const AUDIO_PROCESSING_KEYS = ['echoCancellation', 'noiseSuppression', 'autoGainControl'];
+
+function constraintSupportsValue(capability, value) {
+  if (Array.isArray(capability)) return capability.includes(value) || (value === true && capability.includes('all'));
+  if (typeof capability === 'boolean') return capability === value;
+  return true;
+}
+
+async function applyAudioProcessingConstraints(track, settings) {
+  const constraints = getAudioProcessingConstraints(settings);
+  if (!track?.applyConstraints) {
+    const error = new Error('Este dispositivo não permite alterar o processamento do microfone durante a chamada.');
+    error.code = 'AUDIO_CONSTRAINT_UNSUPPORTED';
+    error.constraints = AUDIO_PROCESSING_KEYS;
+    throw error;
+  }
+
+  const capabilities = track.getCapabilities?.() || {};
+  const unsupported = AUDIO_PROCESSING_KEYS.filter((key) => !constraintSupportsValue(capabilities[key], constraints[key]));
+  const currentSettings = track.getSettings?.() || {};
+  const constraintsToApply = { ...constraints };
+  for (const key of unsupported) {
+    if (currentSettings[key] !== undefined) constraintsToApply[key] = currentSettings[key];
+  }
+
+  await track.applyConstraints(constraintsToApply);
+  const actualSettings = track.getSettings?.() || {};
+  const mismatches = AUDIO_PROCESSING_KEYS.filter(
+    (key) => actualSettings[key] !== undefined && actualSettings[key] !== constraints[key]
+  );
+  return { settings: actualSettings, unsupported: [...new Set([...unsupported, ...mismatches])] };
+}
+
 function createAudioContext() {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return null;
@@ -99,7 +132,7 @@ class PeerManager {
       throw new Error('O dispositivo não forneceu uma faixa de áudio.');
     }
     try {
-      await captureTrack.applyConstraints(getAudioProcessingConstraints(audioSettings));
+      await applyAudioProcessingConstraints(captureTrack, audioSettings);
     } catch {
       // Alguns drivers aceitam a captura, mas não permitem reaplicar as constraints.
       // O estado efetivo será exposto por getAudioProcessingSettings().
@@ -177,6 +210,12 @@ class PeerManager {
     return track?.getSettings?.() || {};
   }
 
+  async setAudioProcessing(settings = {}) {
+    const track = this.audioCaptureStream?.getAudioTracks()[0];
+    if (!track) return { settings: {}, unsupported: [] };
+    return applyAudioProcessingConstraints(track, settings);
+  }
+
   async startMicrophoneLoopback(deviceId, onLevel = () => {}, inputGain = 1, processingSettings = {}) {
     if (this.microphoneLoopback) return;
     const processed = processingSettings.processed === true || processingSettings.processMicrophoneTest === true;
@@ -194,7 +233,7 @@ class PeerManager {
     }
     if (processed) {
       try {
-        await captureTrack.applyConstraints(getAudioProcessingConstraints(processingSettings));
+        await applyAudioProcessingConstraints(captureTrack, processingSettings);
       } catch {
         // O retorno continua disponível mesmo quando o driver ignora uma opção.
       }

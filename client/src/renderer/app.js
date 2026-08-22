@@ -52,6 +52,12 @@ const DEFAULT_AUDIO_SETTINGS = Object.freeze({
   inputGain: 1
 });
 
+const AUDIO_PROCESSING_LABELS = Object.freeze({
+  echoCancellation: 'cancelamento de eco',
+  noiseSuppression: 'supressão de ruído',
+  autoGainControl: 'ganho automático'
+});
+
 function clampInputGain(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return DEFAULT_AUDIO_SETTINGS.inputGain;
@@ -92,22 +98,65 @@ function syncAudioSettingsControls() {
   elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
 }
 
-function readAudioSettingsFromControls() {
-  audioSettings = {
+function collectAudioSettingsFromControls() {
+  return {
     echoCancellation: elements.echoCancellation.checked,
     noiseSuppression: elements.noiseSuppression.checked,
     autoGainControl: elements.autoGainControl.checked,
     processMicrophoneTest: elements.processMicrophoneTest.checked,
     inputGain: clampInputGain(Number(elements.microphoneGain.value) / 100)
   };
+}
+
+function readAudioSettingsFromControls() {
+  audioSettings = collectAudioSettingsFromControls();
   elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
   persistAudioSettings();
   peerManager?.setInputGain(audioSettings.inputGain);
 }
 
-function changeAudioProcessing() {
-  readAudioSettingsFromControls();
-  if (peerManager?.getAudioTrack()) initializeAudio();
+function renderAudioProcessingStatus(settings = {}) {
+  if (!peerManager?.getAudioTrack()) {
+    elements.audioProcessingStatus.textContent = 'Será aplicado quando o microfone for ativado.';
+    elements.audioProcessingStatus.dataset.type = 'info';
+    return;
+  }
+  const unsupported = Object.entries(AUDIO_PROCESSING_LABELS)
+    .filter(([key]) => settings[key] !== undefined && settings[key] !== audioSettings[key])
+    .map(([, label]) => label);
+  elements.audioProcessingStatus.textContent = unsupported.length
+    ? `O dispositivo não confirmou: ${unsupported.join(', ')}.`
+    : 'Processamento aplicado ao áudio enviado.';
+  elements.audioProcessingStatus.dataset.type = unsupported.length ? 'warning' : 'success';
+}
+
+async function changeAudioProcessing() {
+  const previousSettings = { ...audioSettings };
+  const nextSettings = collectAudioSettingsFromControls();
+  audioSettings = nextSettings;
+  peerManager?.setInputGain(nextSettings.inputGain);
+  try {
+    if (peerManager?.getAudioTrack()) {
+      await peerManager.setAudioProcessing(nextSettings);
+    }
+    persistAudioSettings();
+    renderAudioProcessingStatus(peerManager?.getAudioProcessingSettings() || {});
+    if (nextSettings.processMicrophoneTest && peerManager?.microphoneLoopback) {
+      await restartMicrophoneLoopback();
+    }
+  } catch (error) {
+    audioSettings = previousSettings;
+    syncAudioSettingsControls();
+    peerManager?.setInputGain(previousSettings.inputGain);
+    if (peerManager?.getAudioTrack()) {
+      await peerManager.setAudioProcessing(previousSettings).catch(() => {});
+    }
+    const message = error.code === 'AUDIO_CONSTRAINT_UNSUPPORTED'
+      ? 'Este microfone não permite alterar essa opção durante a chamada.'
+      : 'Não foi possível alterar o processamento do microfone.';
+    showNotice(message);
+    renderAudioProcessingStatus(peerManager?.getAudioProcessingSettings() || {});
+  }
 }
 
 async function restartMicrophoneLoopback() {
@@ -271,16 +320,7 @@ async function initializeAudio() {
   try {
     await peerManager.startAudio(elements.microphoneSelect.value || undefined, audioSettings);
     elements.microphone.disabled = false;
-    const processing = peerManager.getAudioProcessingSettings();
-    const unsupported = [
-      ['echoCancellation', 'cancelamento de eco'],
-      ['noiseSuppression', 'supressão de ruído'],
-      ['autoGainControl', 'ganho automático']
-    ].filter(([key]) => processing[key] !== undefined && processing[key] !== audioSettings[key]);
-    elements.audioProcessingStatus.textContent = unsupported.length
-      ? `O dispositivo não confirmou: ${unsupported.map(([, label]) => label).join(', ')}.`
-      : 'Processamento aplicado ao áudio enviado.';
-    elements.audioProcessingStatus.dataset.type = unsupported.length ? 'warning' : 'success';
+    renderAudioProcessingStatus(peerManager.getAudioProcessingSettings());
     setStatus('Microfone conectado.', 'success');
   } catch (error) {
     showNotice('Não foi possível acessar seu microfone. Verifique as permissões do Windows.');
