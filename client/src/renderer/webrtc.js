@@ -427,13 +427,20 @@ class PeerManager {
     if (shouldWatch) this.screenViewers.add(participantId);
     else this.screenViewers.delete(participantId);
 
+    const peerAlreadyExisted = this.peers.has(participantId);
     const peer = this.peers.get(participantId) || (shouldWatch ? this.#createPeer({ participantId }) : null);
     if (!peer) return;
 
     if (shouldWatch) {
-      if (!this.screenStream || peer.screenSenders.length) return;
-      peer.screenSenders = this.screenStream.getTracks().map((track) => peer.connection.addTrack(track, this.screenStream));
-      await this.#renegotiate(peer);
+      if (!this.screenStream) return;
+      let screenTracksAdded = false;
+      if (!peer.screenSenders.length) {
+        peer.screenSenders = this.screenStream.getTracks().map((track) => peer.connection.addTrack(track, this.screenStream));
+        screenTracksAdded = true;
+      }
+      // #createPeer can attach the tracks while constructing a new peer. It
+      // still needs an offer so the viewer actually receives those tracks.
+      if (!peerAlreadyExisted || screenTracksAdded) await this.#renegotiate(peer);
       return;
     }
 

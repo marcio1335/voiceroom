@@ -334,7 +334,10 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
   }
   video.muted = muted;
   video.srcObject = stream;
-  video.play().catch(() => {});
+  const resumeVideo = () => video.play().catch(() => {});
+  video.onloadedmetadata = resumeVideo;
+  video.oncanplay = resumeVideo;
+  resumeVideo();
   elements.screenStage.dataset.active = 'true';
   const hasScreenAudio = Boolean(stream.getAudioTracks?.().length);
   if (hasScreenAudio) screenAudioSourceIds.add(participantId);
