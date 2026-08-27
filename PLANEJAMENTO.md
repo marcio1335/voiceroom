@@ -1,4 +1,6 @@
-# Planejamento de Implementação — VoiceRoom MVP
+# Planejamento de Implementação — VoiceRoom MVP (arquitetura anterior)
+
+> **Aviso:** este documento descreve o MVP originalmente baseado em signaling hospedado. A execução atual da migração VPN local está em [docs/PLANO_MIGRACAO_VPN_LOCAL.md](docs/PLANO_MIGRACAO_VPN_LOCAL.md); itens deste arquivo que mencionam Render, WSS obrigatório, códigos de sala ou atualização manual são históricos e não devem orientar o modo local.
 
 > Documento derivado do PRD fornecido em 21/08/2026.  
 > Status: em execução — fundação `0.1.0` implementada; Gate 0 de rede externa ainda pendente.  

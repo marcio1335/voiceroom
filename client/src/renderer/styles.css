@@ -96,11 +96,17 @@ h2 { margin-bottom: 7px; font-size: 17px; }
 .input-with-icon > span { color: #7d7d87; font-size: 13px; }
 .input-with-icon input { border: 0; margin: 0; padding-left: 0; background: transparent; }
 .landing-primary { width: 100%; }
+.network-other { width: 100%; margin-top: 7px; padding: 6px; border: 0; color: var(--muted); font-size: 10px; }
+.network-picker { display: grid; gap: 8px; margin-top: 11px; border: 1px solid #34343d; border-radius: 9px; padding: 10px; text-align: left; background: #15151a; }
+.network-picker select { padding: 8px 9px; font-size: 11px; }
+.network-picker-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.network-picker-actions button { min-width: 0; padding: 8px 6px; font-size: 10px; }
+.network-picker #network-status { min-height: 25px; line-height: 1.35; }
 .or-divider { position: relative; display: flex; align-items: center; justify-content: center; margin: 13px 0; color: #70707a; font-size: 10px; }
 .or-divider::before, .or-divider::after { flex: 1; height: 1px; background: #303038; content: ""; }
 .or-divider span { padding: 0 10px; }
 .landing-join { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-.landing-join input { text-transform: uppercase; }
+.landing-join input { text-transform: none; }
 .landing-join button { min-width: 66px; }
 .landing-trust { display: flex; justify-content: center; gap: 20px; margin-top: 23px; color: #85858e; }
 .landing-trust > span { display: grid; gap: 4px; justify-items: center; font-size: 15px; }

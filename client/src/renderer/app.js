@@ -1,17 +1,25 @@
 const { SocketClient } = require('./socket');
 const { PeerManager } = require('./webrtc');
 const { getScreenProfile, normalizeScreenProfile } = require('./screen-quality');
+const { DEFAULT_SIGNALING_PORT, LOCAL_ROOM_CODE } = require('./config');
+const { normalizeHostAddress } = require('../../../shared/validation');
 
 const elements = {
   landing: document.querySelector('#landing'),
   room: document.querySelector('#room'),
   name: document.querySelector('#display-name'),
-  roomCode: document.querySelector('#room-code'),
+  hostIp: document.querySelector('#host-ip'),
   create: document.querySelector('#create-room'),
   join: document.querySelector('#join-room'),
-  activeCode: document.querySelector('#active-room-code'),
-  copy: document.querySelector('#copy-room-code'),
+  activeIp: document.querySelector('#active-room-ip'),
+  copyIp: document.querySelector('#copy-room-ip'),
   copyInvite: document.querySelector('#copy-invite-link'),
+  networkPicker: document.querySelector('#network-picker'),
+  networkInterface: document.querySelector('#network-interface'),
+  networkConfirm: document.querySelector('#network-confirm'),
+  networkRefresh: document.querySelector('#network-refresh'),
+  networkOther: document.querySelector('#network-other'),
+  networkStatus: document.querySelector('#network-status'),
   participants: document.querySelector('#participants'),
   microphone: document.querySelector('#microphone'),
   voiceMicrophone: document.querySelector('#voice-microphone'),
@@ -74,6 +82,10 @@ let socketClient;
 let peerManager;
 let selfId;
 let roomCode;
+let hostIp = '';
+let roomRole = null;
+let signalingUrl = null;
+let networkInfo = null;
 let currentRoom;
 let muted = false;
 let deafened = false;
@@ -642,9 +654,15 @@ async function installApplicationUpdate() {
 
 function responseError(response) {
   if (response?.errorCode === 'ROOM_NOT_FOUND') return 'Esta sala não existe.';
+  if (response?.errorCode === 'ROOM_EXISTS') return 'Já existe uma sala ativa neste computador.';
   if (response?.errorCode === 'ROOM_FULL') return 'A sala atingiu o limite de 5 participantes.';
   if (response?.errorCode === 'SCREEN_BUSY') return 'A sala já atingiu o limite de 2 transmissões.';
   if (response?.errorCode === 'SCREEN_NOT_ACTIVE') return 'Essa transmissão não está ativa.';
+  if (response?.errorCode === 'PORT_IN_USE') return response.message || `A porta ${DEFAULT_SIGNALING_PORT} já está sendo utilizada por outro aplicativo.`;
+  if (response?.errorCode === 'INVALID_HOST_IP') return 'O endereço IP informado não é válido.';
+  if (response?.errorCode === 'HOST_NOT_FOUND' || response?.errorCode === 'CONNECTION_TIMEOUT') {
+    return 'Não foi possível localizar uma sala nesse endereço.';
+  }
   return response?.message || 'Não foi possível concluir a operação.';
 }
 
@@ -669,7 +687,10 @@ function renderParticipants() {
     stateElement.setAttribute('aria-hidden', 'true');
     renderAvatarElement(stateElement, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
     const nameElement = document.createElement('span');
-    nameElement.textContent = participant.displayName + (participant.participantId === selfId ? ' (você)' : '');
+    const labels = [];
+    if (participant.role === 'host') labels.push('Host');
+    if (participant.participantId === selfId) labels.push('você');
+    nameElement.textContent = participant.displayName + (labels.length ? ` (${labels.join(', ')})` : '');
     const identity = document.createElement('span');
     identity.className = 'participant-identity';
     identity.append(stateElement, nameElement);
@@ -832,7 +853,7 @@ function renderVoiceControls() {
 
 function renderRoom(room) {
   currentRoom = room;
-  elements.activeCode.textContent = room.code;
+  if (elements.activeIp) elements.activeIp.textContent = hostIp || '—';
   const screenParticipantIds = getScreenParticipantIds(room);
   elements.screen.disabled = !sharingScreen && screenParticipantIds.length >= 2;
   if (elements.screenShareLabel) {
@@ -975,10 +996,13 @@ function setScreenDiagnosticsVisible(visible) {
 
 function enterRoom(result) {
   selfId = result.data.participantId;
-  roomCode = result.data.room.code;
+  roomCode = result.data.room.code || LOCAL_ROOM_CODE;
+  roomRole = result.data.role || result.data.room.participants.find((participant) => participant.participantId === selfId)?.role || 'guest';
   elements.landing.hidden = true;
   elements.room.hidden = false;
-  setStatus('Sala pronta. Ative o microfone quando quiser.', 'success');
+  if (elements.copyInvite) elements.copyInvite.hidden = roomRole !== 'host';
+  if (elements.leave) elements.leave.textContent = roomRole === 'host' ? 'Encerrar sala' : 'Sair da sala';
+  setStatus(roomRole === 'host' ? 'Sala local pronta. Envie o IP aos seus amigos.' : 'Sala conectada. Ative o microfone quando quiser.', 'success');
   renderRoom(result.data.room);
   peerManager = new PeerManager({
     socket: socketClient,
@@ -1305,6 +1329,79 @@ async function loadMicrophones() {
   }
 }
 
+function renderNetworkOptions(info) {
+  if (!elements.networkInterface) return;
+  elements.networkInterface.replaceChildren();
+  for (const entry of info?.interfaces || []) {
+    const option = document.createElement('option');
+    option.value = entry.address;
+    const label = entry.provider || (entry.likelyVpn ? 'VPN provável' : 'Rede local');
+    option.textContent = `${entry.address} — ${entry.name} (${label})`;
+    elements.networkInterface.append(option);
+  }
+  if (hostIp && [...elements.networkInterface.options].some((option) => option.value === hostIp)) {
+    elements.networkInterface.value = hostIp;
+  }
+}
+
+async function refreshNetworkInterfaces({ reveal = false } = {}) {
+  try {
+    networkInfo = await window.voiceRoom?.getNetworkInterfaces?.();
+  } catch {
+    networkInfo = null;
+  }
+  renderNetworkOptions(networkInfo || {});
+  const preferred = networkInfo?.preferred?.address || null;
+  if (preferred && !reveal) {
+    hostIp = preferred;
+    if (elements.networkPicker) elements.networkPicker.hidden = true;
+    if (elements.networkOther) elements.networkOther.hidden = false;
+    return preferred;
+  }
+  if (!networkInfo?.interfaces?.length) {
+    if (elements.networkStatus) elements.networkStatus.textContent = 'Nenhuma interface IPv4 foi encontrada.';
+    if (elements.networkPicker) elements.networkPicker.hidden = false;
+    return null;
+  }
+  if (elements.networkStatus) {
+    elements.networkStatus.textContent = networkInfo.candidates?.length
+      ? 'Escolha a interface VPN que seus amigos também utilizam.'
+      : 'Nenhuma VPN foi identificada automaticamente. Escolha um IP manualmente.';
+  }
+  if (elements.networkPicker) elements.networkPicker.hidden = false;
+  if (elements.networkOther) elements.networkOther.hidden = true;
+  return null;
+}
+
+async function resolveHostIp() {
+  if (!networkInfo) {
+    const preferred = await refreshNetworkInterfaces();
+    if (preferred) return preferred;
+  }
+  // Preserve an explicit choice made in the picker, including when it differs
+  // from the heuristic preferred VPN address.
+  if (hostIp && networkInfo?.interfaces?.some((entry) => entry.address === hostIp)
+    && elements.networkPicker?.hidden !== false) {
+    return hostIp;
+  }
+  if (networkInfo?.preferred?.address && elements.networkPicker?.hidden !== false) {
+    hostIp = networkInfo.preferred.address;
+    return hostIp;
+  }
+  const selected = elements.networkInterface?.value || '';
+  if (!selected) {
+    await refreshNetworkInterfaces({ reveal: true });
+    showNotice('Selecione o IP da VPN para criar a sala.', 'warning');
+    return null;
+  }
+  if (elements.networkPicker && !elements.networkPicker.hidden) {
+    showNotice('Confirme o IP selecionado para criar a sala.', 'warning');
+    return null;
+  }
+  hostIp = selected;
+  return hostIp;
+}
+
 async function createOrJoin(action) {
   const displayName = elements.name.value.trim();
   if (!displayName) {
@@ -1315,19 +1412,86 @@ async function createOrJoin(action) {
   try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, displayName); } catch { /* armazenamento opcional */ }
   elements.create.disabled = true;
   elements.join.disabled = true;
-  setStatus('Conectando ao servidor…');
-  const result = action === 'create'
-    ? await socketClient.createRoom(displayName, profileAvatar || null)
-    : await socketClient.joinRoom(elements.roomCode.value, displayName, profileAvatar || null);
-  elements.create.disabled = false;
-  elements.join.disabled = false;
-  if (!result?.ok) {
-    showNotice(responseError(result));
-    setStatus('Não foi possível entrar.', 'error');
-    return;
+  setStatus(action === 'create' ? 'Preparando sala local…' : 'Verificando host…');
+  let localServerStartedForAttempt = false;
+  try {
+    let result;
+    if (action === 'create') {
+      const selectedIp = await resolveHostIp();
+      if (!selectedIp) return;
+      const serverResult = await window.voiceRoom?.startLocalServer?.({
+        ip: selectedIp,
+        port: DEFAULT_SIGNALING_PORT
+      });
+      if (!serverResult?.ok) {
+        showNotice(serverResult?.message || 'Não foi possível iniciar a sala local.', 'error');
+        setStatus('Não foi possível criar a sala.', 'error');
+        return;
+      }
+      localServerStartedForAttempt = true;
+      hostIp = serverResult.data.host;
+      signalingUrl = `http://${hostIp}:${serverResult.data.port}`;
+      const target = await window.voiceRoom?.setSignalingTarget?.(signalingUrl);
+      if (!target?.ok) throw new Error('O endereço da sala local não é válido.');
+      const health = await SocketClient.healthCheck(signalingUrl);
+      if (!health?.ok) throw new Error('A sala local não respondeu ao health check.');
+      await socketClient.connect(signalingUrl);
+      result = await socketClient.createRoom(displayName, profileAvatar || null);
+    } else {
+      let parsed;
+      try {
+        parsed = normalizeHostAddress(elements.hostIp.value);
+      } catch (error) {
+        showNotice(error.message || 'O endereço IP informado não é válido.');
+        setStatus('Endereço inválido.', 'error');
+        return;
+      }
+      hostIp = parsed.host;
+      signalingUrl = parsed.url;
+      const target = await window.voiceRoom?.setSignalingTarget?.(signalingUrl);
+      if (!target?.ok) {
+        showNotice('O endereço do host não é válido.');
+        setStatus('Endereço inválido.', 'error');
+        return;
+      }
+      const health = await SocketClient.healthCheck(signalingUrl);
+      if (!health?.ok) {
+        showNotice(health.errorCode === 'CONNECTION_TIMEOUT'
+          ? 'Não foi possível conectar ao host. Verifique a VPN e o Firewall do Windows.'
+          : 'Não foi possível localizar uma sala nesse endereço.');
+        setStatus('Host não encontrado.', 'error');
+        return;
+      }
+      await socketClient.connect(signalingUrl);
+      result = await socketClient.joinRoom(displayName, profileAvatar || null);
+    }
+    if (!result?.ok) {
+      socketClient?.close();
+      try { await window.voiceRoom?.clearSignalingTargets?.(); } catch { /* cleanup best effort */ }
+      if (action === 'create' && localServerStartedForAttempt) {
+        try { await window.voiceRoom?.stopLocalServer?.({ notify: false, reason: 'create_rejected' }); } catch { /* cleanup best effort */ }
+      }
+      showNotice(responseError(result));
+      setStatus('Não foi possível entrar.', 'error');
+      return;
+    }
+    enterRoom(result);
+    await loadMicrophones();
+  } catch (error) {
+    if (action === 'create' && localServerStartedForAttempt && !roomCode) {
+      socketClient?.close();
+      try { await window.voiceRoom?.stopLocalServer?.({ notify: false, reason: 'create_failed' }); } catch { /* cleanup best effort */ }
+    }
+    if (!roomCode) {
+      socketClient?.close();
+      try { await window.voiceRoom?.clearSignalingTargets?.(); } catch { /* cleanup best effort */ }
+    }
+    showNotice(error?.message || 'Não foi possível conectar ao host. Verifique a VPN e o Firewall do Windows.');
+    setStatus('Não foi possível conectar.', 'error');
+  } finally {
+    elements.create.disabled = false;
+    elements.join.disabled = false;
   }
-  enterRoom(result);
-  await loadMicrophones();
 }
 
 async function toggleMicrophone() {
@@ -1450,8 +1614,16 @@ async function chooseScreenSource() {
   });
 }
 
-async function leaveRoom() {
-  try { await socketClient.leaveRoom(); } catch { /* conexão já pode ter caído */ }
+async function leaveRoom({ notifyServer = true, stopHost = true } = {}) {
+  const wasHost = roomRole === 'host';
+  if (notifyServer) {
+    try { await socketClient?.leaveRoom(); } catch { /* conexão já pode ter caído */ }
+  }
+  if (wasHost && stopHost) {
+    try { await window.voiceRoom?.stopLocalServer?.({ notify: true, reason: 'host_left' }); } catch { /* cleanup best effort */ }
+  }
+  socketClient?.close();
+  try { await window.voiceRoom?.clearSignalingTargets?.(); } catch { /* cleanup best effort */ }
   closeAudioSettings();
   setScreenViewExpanded(false);
   peerManager?.close();
@@ -1460,6 +1632,9 @@ async function leaveRoom() {
   peerManager = null;
   selfId = null;
   roomCode = null;
+  roomRole = null;
+  hostIp = '';
+  signalingUrl = null;
   currentRoom = null;
   sharingScreen = false;
   watchingScreenParticipantId = null;
@@ -1483,6 +1658,9 @@ async function leaveRoom() {
   elements.reconnect.hidden = true;
   elements.reconnect.disabled = false;
   elements.reconnect.textContent = 'Reconectar chamadas';
+  if (elements.copyInvite) elements.copyInvite.hidden = false;
+  if (elements.leave) elements.leave.textContent = 'Sair da sala';
+  if (elements.networkOther) elements.networkOther.hidden = true;
   muted = false;
   deafened = false;
   mutedBeforeDeafen = false;
@@ -1543,7 +1721,7 @@ function releasePtt() {
 }
 
 function getInviteLink() {
-  return roomCode ? `voiceroom://join/${encodeURIComponent(roomCode)}` : '';
+  return hostIp ? `voiceroom://join/${encodeURIComponent(`${hostIp}:${DEFAULT_SIGNALING_PORT}`)}` : '';
 }
 
 async function copyInviteLink() {
@@ -1551,7 +1729,7 @@ async function copyInviteLink() {
   if (!inviteLink) return;
   try {
     await navigator.clipboard.writeText(inviteLink);
-    showNotice('Link de convite copiado. Ao clicar nele, o VoiceRoom abre com o código preenchido.', 'success');
+    showNotice('Endereço de convite copiado.', 'success');
   } catch {
     showNotice(`Copie este link: ${inviteLink}`);
   }
@@ -1559,27 +1737,42 @@ async function copyInviteLink() {
 
 function handleDeepLink(url) {
   if (typeof url !== 'string' || !url.toLowerCase().startsWith('voiceroom://')) return;
-  const match = url.match(/^voiceroom:\/\/join\/([A-Za-z0-9]+)$/i);
+  const match = url.match(/^voiceroom:\/\/join\/(.+)$/i);
   if (!match) return;
-  const code = decodeURIComponent(match[1]).toUpperCase();
-  elements.roomCode.value = code;
+  let address;
+  try { address = normalizeHostAddress(decodeURIComponent(match[1])); } catch { return; }
+  if (elements.hostIp) elements.hostIp.value = address.address;
   if (elements.landing.hidden) {
-    showNotice(`Código ${code} recebido pelo link. Saia da sala atual para entrar nele.`);
+    showNotice(`Endereço ${address.address} recebido pelo link. Saia da sala atual para entrar nele.`);
   } else {
-    elements.roomCode.focus();
-    showNotice(`Código ${code} preenchido pelo link.`, 'success');
+    elements.hostIp?.focus();
+    showNotice(`Endereço ${address.address} preenchido pelo link.`, 'success');
   }
 }
 
 function bindEvents() {
   elements.create.addEventListener('click', () => createOrJoin('create'));
   elements.join.addEventListener('click', () => createOrJoin('join'));
-  elements.roomCode.addEventListener('input', () => { elements.roomCode.value = elements.roomCode.value.toUpperCase(); });
-  elements.copy.addEventListener('click', async () => {
-    await navigator.clipboard.writeText(roomCode);
-    showNotice('Código copiado.', 'success');
+  elements.hostIp?.addEventListener('input', () => {
+    elements.hostIp.value = elements.hostIp.value.replace(/[^0-9.:\s]/g, '');
+  });
+  elements.copyIp?.addEventListener('click', async () => {
+    if (!hostIp) return;
+    await navigator.clipboard.writeText(hostIp);
+    showNotice('IP da sala copiado.', 'success');
   });
   elements.copyInvite.addEventListener('click', copyInviteLink);
+  elements.networkConfirm?.addEventListener('click', async () => {
+    if (!elements.networkInterface?.value) {
+      showNotice('Selecione uma interface de rede.', 'warning');
+      return;
+    }
+    hostIp = elements.networkInterface.value;
+    if (elements.networkPicker) elements.networkPicker.hidden = true;
+    await createOrJoin('create');
+  });
+  elements.networkRefresh?.addEventListener('click', () => refreshNetworkInterfaces({ reveal: true }));
+  elements.networkOther?.addEventListener('click', () => refreshNetworkInterfaces({ reveal: true }));
   elements.profileBadge?.addEventListener('click', () => elements.profilePhotoInput?.click());
   elements.profilePhotoInput?.addEventListener('change', handleProfilePhotoChange);
   elements.microphone.addEventListener('click', toggleMicrophone);
@@ -1667,6 +1860,11 @@ function bindEvents() {
   document.addEventListener('keyup', handlePttKeyUp);
   window.addEventListener('blur', releasePtt);
   window.voiceRoom?.onDeepLink?.(handleDeepLink);
+  window.voiceRoom?.onLocalServerState?.((state) => {
+    if (state?.state === 'error') {
+      showNotice(state.message || 'Não foi possível iniciar a sala local.', 'error');
+    }
+  });
   window.voiceRoom?.onUpdateState?.(handleAppUpdateState);
   window.voiceRoom?.getUpdateState?.().then(handleAppUpdateState).catch(() => {});
   window.voiceRoom?.getAppVersion?.().then((version) => {
@@ -1685,6 +1883,12 @@ function handleSocketEvent(event, payload) {
   }
   if (event === 'room:state') {
     renderRoom(payload.room);
+    return;
+  }
+  if (event === 'room:host-ended') {
+    if (!roomCode) return;
+    showNotice('O host encerrou a sala.', 'warning');
+    leaveRoom({ notifyServer: false, stopHost: false });
     return;
   }
   if (event === 'peer:offer') {
@@ -1723,9 +1927,16 @@ function handleSocketEvent(event, payload) {
   if (event === 'disconnect' && roomCode) {
     setStatus('Conexão perdida. Tentando reconectar…', 'warning');
   }
+  if (event === 'connect-error' && roomCode) {
+    setStatus('Não foi possível conectar ao host.', 'error');
+  }
+  if (event === 'reconnect-timeout' && roomCode) {
+    showNotice('A VPN não voltou a tempo. Verifique a conexão e entre novamente.', 'warning');
+    leaveRoom({ notifyServer: false, stopHost: false });
+  }
   if (event === 'resume-result' && !payload?.ok) {
     showNotice('A sala expirou. Crie ou entre em uma nova sala.');
-    leaveRoom();
+    leaveRoom({ notifyServer: false, stopHost: false });
   }
 }
 
@@ -1736,7 +1947,7 @@ function bootstrap() {
   syncAudioSettingsControls();
   bindEvents();
   socketClient = new SocketClient({ onEvent: handleSocketEvent });
-  setStatus('Conectando ao servidor…');
+  setStatus('Pronto para criar ou entrar em uma sala.');
 }
 
 bootstrap();

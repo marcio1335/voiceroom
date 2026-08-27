@@ -1,6 +1,9 @@
 const path = require('node:path');
 const { app, BrowserWindow, desktopCapturer, ipcMain, Menu, nativeImage, session, shell, Tray } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const { LocalServerController } = require('./local-server');
+const { getNetworkInterfaces, getPreferredVpnAddress, getVpnCandidates } = require('./network');
+const { normalizeHostAddress } = require('../../../shared/validation');
 
 let mainWindow;
 let tray;
@@ -9,6 +12,27 @@ let isQuitting = false;
 let pendingDeepLink;
 let updateCheckTimer;
 let updateState = Object.freeze({ status: 'unavailable' });
+let quitCleanupStarted = false;
+const allowedSignalingTargets = new Set();
+
+function signalingOrigin(value) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' || !parsed.hostname || !parsed.port) return null;
+    const normalized = normalizeHostAddress(`${parsed.hostname}:${parsed.port}`);
+    return `http://${normalized.address}`;
+  } catch {
+    return null;
+  }
+}
+
+const localServer = new LocalServerController({
+  onState: (state) => {
+    if (mainWindow?.webContents && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('local-server:state', state);
+    }
+  }
+});
 pendingDeepLink = process.argv.find((argument) => argument.startsWith('voiceroom://'));
 
 const UPDATE_CHECK_DELAY_MS = 15_000;
@@ -201,6 +225,19 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === 'media' || permission === 'display-capture' || permission === 'fullscreen');
   });
+  session.defaultSession.webRequest.onBeforeRequest(
+    { urls: ['http://*/*', 'ws://*/*'] },
+    (details, callback) => {
+      let allowed = false;
+      try {
+        const parsed = new URL(details.url);
+        allowed = allowedSignalingTargets.has(`${parsed.protocol === 'ws:' ? 'http:' : parsed.protocol}//${parsed.host}`);
+      } catch {
+        allowed = false;
+      }
+      callback({ cancel: !allowed });
+    }
+  );
 
   ipcMain.handle('app:get-version', () => app.getVersion());
   ipcMain.handle('app:get-update-state', () => updateState);
@@ -211,6 +248,53 @@ app.whenReady().then(() => {
     tray?.destroy();
     autoUpdater.quitAndInstall(false, true);
     return true;
+  });
+  ipcMain.handle('network:get-interfaces', () => {
+    const interfaces = getNetworkInterfaces();
+    const candidates = getVpnCandidates(interfaces);
+    const preferred = getPreferredVpnAddress(interfaces);
+    return { interfaces, candidates, preferred };
+  });
+  ipcMain.handle('signaling:set-target', (_event, value) => {
+    const origin = signalingOrigin(value);
+    if (!origin) return { ok: false, errorCode: 'INVALID_HOST_IP', message: 'O endereço do host não é válido.' };
+    allowedSignalingTargets.add(origin);
+    return { ok: true, data: { origin } };
+  });
+  ipcMain.handle('signaling:clear-targets', () => {
+    allowedSignalingTargets.clear();
+    return { ok: true };
+  });
+  ipcMain.handle('local-server:get-status', () => localServer.getServerStatus());
+  ipcMain.handle('local-server:start', async (_event, payload = {}) => {
+    try {
+      const parsed = normalizeHostAddress(
+        payload.port === undefined ? payload.ip : `${payload.ip}:${payload.port}`
+      );
+      const available = getNetworkInterfaces().some((item) => item.address === parsed.host);
+      if (!available) {
+        return {
+          ok: false,
+          errorCode: 'INVALID_BIND_ADDRESS',
+          message: 'O IP selecionado não pertence a uma interface ativa deste computador.'
+        };
+      }
+      const status = await localServer.startLocalServer({ ip: parsed.host, port: parsed.port });
+      return { ok: true, data: status };
+    } catch (error) {
+      return {
+        ok: false,
+        errorCode: error.publicCode || error.code || 'LOCAL_SERVER_ERROR',
+        message: error.publicMessage || error.message || 'Não foi possível iniciar a sala local.'
+      };
+    }
+  });
+  ipcMain.handle('local-server:stop', async (_event, payload = {}) => {
+    const status = await localServer.stopLocalServer({
+      notify: payload.notify !== false,
+      reason: typeof payload.reason === 'string' ? payload.reason : 'host_ended'
+    });
+    return { ok: true, data: status };
   });
   ipcMain.handle('desktop-capturer:get-sources', async () => {
     const sources = await desktopCapturer.getSources({
@@ -253,8 +337,15 @@ app.on('window-all-closed', () => {
   // escolher "Sair completamente" no menu da bandeja.
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
+  allowedSignalingTargets.clear();
+  if (quitCleanupStarted || !localServer.getServerStatus().running) return;
+  event.preventDefault();
+  quitCleanupStarted = true;
+  localServer.stopLocalServer({ notify: true, reason: 'app_closed' })
+    .catch(() => {})
+    .finally(() => app.quit());
 });
 
 app.on('will-quit', () => {

@@ -1,10 +1,17 @@
-const SIGNALING_SERVER = window.VOICEROOM_SIGNALING_SERVER || 'http://localhost:3000';
 const PROTOCOL_VERSION = 1;
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' }
-];
+const DEFAULT_SIGNALING_PORT = 32145;
+const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
+const DEFAULT_RECONNECT_TIMEOUT_MS = 30_000;
+const LOCAL_ROOM_CODE = 'VPN234';
+// A VPN supplies the direct network path. STUN can be enabled later as an
+// explicit fallback after validating the selected VPN with getStats().
+const ICE_SERVERS = [];
 
-module.exports = { ICE_SERVERS, PROTOCOL_VERSION, SIGNALING_SERVER };
+module.exports = {
+  DEFAULT_CONNECTION_TIMEOUT_MS,
+  DEFAULT_RECONNECT_TIMEOUT_MS,
+  DEFAULT_SIGNALING_PORT,
+  ICE_SERVERS,
+  LOCAL_ROOM_CODE,
+  PROTOCOL_VERSION
+};

@@ -25,6 +25,7 @@ Isso elimina a necessidade de distribuir manualmente um novo instalador a cada v
 
 ## Fora de escopo
 
-- Atualização do servidor Render.
 - Atualização sem reiniciar o processo Electron.
 - Assinatura de código e criação de certificados.
+
+O canal de updates é independente do signaling local via VPN: uma falha/offline no GitHub não impede criar ou entrar em salas.

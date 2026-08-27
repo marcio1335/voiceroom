@@ -5,7 +5,7 @@
 
 ## Decisão
 
-Manter salas e participantes em `Map` na memória do processo Node.js. Uma sala é criada por código aleatório de seis caracteres e desaparece quando todos os participantes saem ou expiram.
+Manter sala e participantes em `Map` na memória do processo de signaling. No modo VPN local, o processo é executado pelo Electron do HOST e existe uma única sala por instância; o identificador interno não é exibido ao usuário, que compartilha o IP virtual do HOST.
 
 ## Motivo
 
@@ -13,8 +13,7 @@ O MVP não precisa de contas, histórico ou dados permanentes. A escolha reduz c
 
 ## Consequências
 
-- Reiniciar o servidor encerra as salas ativas.
-- O código é convite, não autenticação forte; rate limiting e validação são obrigatórios.
+- Reiniciar o processo do HOST encerra a sala ativa.
+- O IP da VPN é endereço de sessão, não autenticação forte; rate limiting e validação continuam obrigatórios.
 - Um token efêmero separado do `socketId` permite retomada curta após queda.
 - Escalar o signaling para múltiplas instâncias exigirá um store compartilhado.
-

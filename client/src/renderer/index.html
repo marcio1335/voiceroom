@@ -2,7 +2,7 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://localhost:3000 ws://localhost:3000 https://voiceroom-signaling.onrender.com wss://voiceroom-signaling.onrender.com; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http: ws:; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none';" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VoiceRoom</title>
     <link rel="stylesheet" href="./styles.css" />
@@ -20,7 +20,7 @@
 
         <div class="header-tools">
           <button class="header-icon" type="button" aria-label="Tema atual">☼</button>
-          <span id="status" class="status" data-type="info">Conectando ao servidor…</span>
+          <span id="status" class="status" data-type="info">Pronto para criar ou entrar em uma sala.</span>
           <span id="latency" class="latency" aria-live="polite">Latência: —</span>
           <button id="profile-badge" class="profile-badge" type="button" aria-label="Alterar foto de perfil" title="Clique para escolher uma foto de perfil">V</button>
           <input id="profile-photo-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" />
@@ -45,18 +45,28 @@
           <div class="landing-emblem brand-mark" aria-hidden="true"><img src="../../assets/voice-icon.png" alt="" /></div>
           <div class="landing-lines" aria-hidden="true"><span></span><span></span></div>
           <div id="landing-avatar" class="landing-avatar" aria-hidden="true">V<span>⌕</span></div>
-          <h1>Entre em uma sala</h1>
-          <p class="muted">Sem cadastro. Escolha um apelido e converse com seus amigos.</p>
+          <h1>Sala local via VPN</h1>
+          <p class="muted">Abra a mesma VPN que seus amigos, escolha um apelido e converse sem servidor público.</p>
           <label class="sr-only" for="display-name">Seu nome</label>
           <div class="input-with-icon">
             <span aria-hidden="true">♙</span>
             <input id="display-name" maxlength="30" autocomplete="off" placeholder="Seu nome" />
           </div>
           <button id="create-room" class="primary landing-primary">Criar sala</button>
+          <button id="network-other" class="ghost network-other" type="button" hidden>Escolher outro IP</button>
+          <div id="network-picker" class="network-picker" hidden>
+            <label class="small muted" for="network-interface">Escolha o IP da sala</label>
+            <select id="network-interface" aria-label="Interface de rede da sala"></select>
+            <div class="network-picker-actions">
+              <button id="network-refresh" class="ghost" type="button">Atualizar interfaces</button>
+              <button id="network-confirm" class="primary" type="button">Usar este IP</button>
+            </div>
+            <span id="network-status" class="small muted" role="status"></span>
+          </div>
           <div class="or-divider"><span>ou</span></div>
           <div class="landing-join">
-            <label class="sr-only" for="room-code">Código da sala</label>
-            <input id="room-code" maxlength="6" autocomplete="off" placeholder="CÓDIGO" aria-label="Código da sala" />
+            <label class="sr-only" for="host-ip">IP do host</label>
+            <input id="host-ip" maxlength="21" inputmode="decimal" autocomplete="off" placeholder="IP DO HOST" aria-label="IP do host" />
             <button id="join-room">Entrar</button>
           </div>
           <div class="landing-trust">
@@ -72,12 +82,12 @@
           <div class="room-sidebar-top">
             <div class="room-code-row">
               <div>
-                <span class="muted small">Sala</span>
-                <strong id="active-room-code">------</strong>
+                <span class="muted small">IP da sala</span>
+                <strong id="active-room-ip">—</strong>
               </div>
               <div class="room-code-actions">
-                <button id="copy-room-code" class="icon-button" title="Copiar código" aria-label="Copiar código">⧉</button>
-                <button id="copy-invite-link" class="icon-button" title="Copiar link de convite" aria-label="Copiar link">↗</button>
+                <button id="copy-room-ip" class="icon-button" title="Copiar IP" aria-label="Copiar IP">⧉</button>
+                <button id="copy-invite-link" class="icon-button" title="Copiar convite" aria-label="Copiar convite">↗</button>
               </div>
             </div>
             <div class="sidebar-divider"></div>
