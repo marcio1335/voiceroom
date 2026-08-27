@@ -21,7 +21,7 @@ Esta implementação cobre a fundação do modo local via VPN:
 Artefatos gerados localmente:
 
 - `release/win-unpacked/VoiceRoom.exe` — build portátil para smoke test;
-- `release/VoiceRoom Setup 0.1.2.exe` — instalador NSIS do último build local.
+- `release/VoiceRoom Setup 0.1.3.exe` — instalador NSIS do último build local.
 
 O signaling não depende de um serviço público. Ao criar uma sala, o HOST inicia o servidor local na interface VPN selecionada e compartilha seu IP com os convidados.
 
