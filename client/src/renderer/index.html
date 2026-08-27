@@ -9,7 +9,7 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="app-header">
+      <header class="window-titlebar">
         <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true"><img src="../../assets/voice-icon.png" alt="" /></div>
           <div class="brand-copy">
@@ -18,16 +18,21 @@
           </div>
         </div>
 
-        <div class="header-tools">
-          <button class="header-icon" type="button" aria-label="Tema atual">☼</button>
-          <span id="status" class="status" data-type="info">Pronto para criar ou entrar em uma sala.</span>
-          <span id="latency" class="latency" aria-live="polite">Latência: —</span>
+        <div class="window-tools">
+          <span id="status" class="status" data-type="info">Pronto.</span>
+          <button id="theme-toggle" class="header-icon" type="button" aria-label="Alternar tema" title="Alternar tema">☾</button>
+          <span id="latency" class="sr-only" aria-live="polite">Latência: —</span>
           <button id="profile-badge" class="profile-badge" type="button" aria-label="Alterar foto de perfil" title="Clique para escolher uma foto de perfil">V</button>
           <input id="profile-photo-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" />
+          <span class="window-divider" aria-hidden="true"></span>
+          <button id="window-minimize" class="window-button" type="button" aria-label="Minimizar" title="Minimizar"><svg viewBox="0 0 16 16"><path d="M3 8.5h10" /></svg></button>
+          <button id="window-maximize" class="window-button" type="button" aria-label="Maximizar" title="Maximizar"><svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" /></svg></button>
+          <button id="window-close" class="window-button window-close" type="button" aria-label="Fechar" title="Fechar para a bandeja"><svg viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8" /></svg></button>
         </div>
       </header>
 
       <div id="notice" class="notice" role="alert" hidden></div>
+      <div id="presence-toasts" class="presence-toasts" aria-live="polite" aria-atomic="true"></div>
 
       <section id="app-update" class="app-update" hidden role="status" aria-live="polite">
         <div class="app-update-copy">
@@ -52,6 +57,7 @@
             <span aria-hidden="true">♙</span>
             <input id="display-name" maxlength="30" autocomplete="off" placeholder="Seu nome" />
           </div>
+          <span id="profile-local-note" class="profile-local-note muted">Seu perfil ficará salvo somente neste computador.</span>
           <button id="create-room" class="primary landing-primary">Criar sala</button>
           <button id="network-other" class="ghost network-other" type="button" hidden>Escolher outro IP</button>
           <div id="network-picker" class="network-picker" hidden>
@@ -69,6 +75,14 @@
             <input id="host-ip" maxlength="21" inputmode="decimal" autocomplete="off" placeholder="IP DO HOST" aria-label="IP do host" />
             <button id="join-room">Entrar</button>
           </div>
+          <section class="nearby-rooms" aria-labelledby="nearby-rooms-title">
+            <div class="nearby-rooms-heading">
+              <span id="nearby-rooms-title">Salas na sua VPN</span>
+              <button id="network-discover" class="text-button" type="button">Buscar</button>
+            </div>
+            <div id="network-discovery-status" class="small muted" role="status">Conecte Hamachi, Radmin ou outra VPN para encontrar salas.</div>
+            <div id="network-peer-list" class="network-peer-list"></div>
+          </section>
           <div class="landing-trust">
             <span>♙<small>sem cadastro</small></span>
             <span>◷<small>sala efêmera</small></span>
@@ -78,28 +92,38 @@
       </section>
 
       <section id="room" class="room-layout" hidden>
-        <aside class="room-sidebar card">
+        <aside class="room-sidebar">
           <div class="room-sidebar-top">
             <div class="room-code-row">
               <div>
-                <span class="muted small">IP da sala</span>
-                <strong id="active-room-ip">—</strong>
+                <span class="muted small">Endereço da sala</span>
+                <button id="active-room-ip" class="room-address-copy" type="button" title="Clique para copiar">—</button>
               </div>
               <div class="room-code-actions">
-                <button id="copy-room-ip" class="icon-button" title="Copiar IP" aria-label="Copiar IP">⧉</button>
-                <button id="copy-invite-link" class="icon-button" title="Copiar convite" aria-label="Copiar convite">↗</button>
+                <button id="copy-room-ip" class="icon-button" title="Copiar endereço" aria-label="Copiar endereço"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>
+                <button id="copy-invite-link" class="icon-button" title="Copiar convite" aria-label="Copiar convite"><svg viewBox="0 0 24 24"><path d="M10 14 21 3M15 3h6v6M21 13v5a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3h5"/></svg></button>
               </div>
             </div>
             <div class="sidebar-divider"></div>
             <div class="section-heading">
               <h2>Na sala</h2>
-              <span class="pill">máx. 5</span>
+              <span class="pill">máx. 10</span>
             </div>
+            <div class="room-duration-row"><span class="live-dot" aria-hidden="true"></span><span>Chamada</span><strong id="room-duration">00:00</strong></div>
+            <nav class="channel-list" aria-label="Canais da sala">
+              <button id="voice-channel" class="channel-button" type="button" hidden><svg viewBox="0 0 24 24"><path d="M5 9v6M9 6v12M13 8v8M17 5v14M21 10v4" /></svg><span>Voz e tela</span></button>
+              <button id="text-channel" class="channel-button is-active" type="button"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 3v-14Z" /></svg><span id="text-channel-name">Chat da sala</span></button>
+            </nav>
             <ul id="participants" class="participants"></ul>
           </div>
 
           <div class="sidebar-bottom">
-            <div class="voice-controls" role="group" aria-label="Controles de voz">
+            <button id="screen-share" class="sidebar-screen-share" type="button" title="Compartilhar tela" aria-label="Compartilhar tela">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              <span id="screen-share-label">Compartilhar tela</span>
+            </button>
+            <div class="sidebar-bottom-row">
+              <div class="voice-controls" role="group" aria-label="Controles de voz">
               <button id="voice-microphone" class="voice-control" type="button" data-state="muted" aria-pressed="false" title="Ativar microfone" aria-label="Ativar microfone">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" />
@@ -112,59 +136,54 @@
                   <path d="M4 14v4a2 2 0 0 0 2 2h1v-6H5a1 1 0 0 0-1 1ZM20 14v4a2 2 0 0 1-2 2h-1v-6h2a1 1 0 0 1 1 1Z" />
                 </svg>
               </button>
-              <button id="audio-settings-open" class="voice-control voice-settings" type="button" title="Configurações de áudio" aria-label="Configurações de áudio">
+              <button id="audio-settings-open" class="voice-control voice-settings" type="button" title="Configurações" aria-label="Configurações">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
-                  <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.8 1.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.1h-2.5v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-1.8-1.8.1-.1A1.7 1.7 0 0 0 8.1 15a1.7 1.7 0 0 0-1.5-1H6.5v-2.5h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.8-1.8.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.1H15v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.8 1.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.1V14h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+                  <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+                  <circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" />
                 </svg>
               </button>
+              </div>
+              <button id="leave-room" class="leave-button ghost">Sair da sala</button>
             </div>
-            <button id="leave-room" class="leave-button ghost">Sair da sala</button>
           </div>
         </aside>
 
-        <section class="call-card">
-          <div class="call-heading">
-            <div>
-              <span class="eyebrow">03 / CHAMADA</span>
-              <h2>Conversa em andamento</h2>
-            </div>
-            <span class="call-live"><i></i> ao vivo</span>
-          </div>
-
+        <section id="voice-view" class="call-card">
+          <div id="stage-area" class="stage-area">
           <div id="screen-stage" class="screen-stage" data-active="false">
             <div id="screen-empty-stage" class="empty-stage">
               <span class="stage-chip">▣&nbsp; sem tela</span>
               <strong>Nenhuma transmissão em exibição</strong>
               <span class="muted">Escolha uma transmissão abaixo para assistir.</span>
             </div>
+            <div id="screen-gallery" class="screen-gallery" hidden></div>
+          </div>
           </div>
 
           <div class="call-controls">
             <div class="call-control-bar">
               <!-- Mantido no DOM para a lógica existente; o controle principal fica na barra lateral. -->
               <button id="microphone" hidden disabled><span class="button-icon">♩</span> Ativar microfone</button>
-              <button id="screen-share" class="screen-share-button">
-                <span class="button-icon" aria-hidden="true">▣</span>
-                <span id="screen-share-label">Compartilhar tela</span>
-              </button>
-              <button id="screen-fullscreen" class="screen-fullscreen-button" disabled title="Tela cheia" aria-label="Tela cheia">
-                <span class="button-icon" aria-hidden="true">⛶</span>
+              <button id="screen-fullscreen" class="player-button screen-fullscreen-button" disabled title="Tela cheia" aria-label="Tela cheia">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
                 <span id="screen-fullscreen-label" class="sr-only">Tela cheia</span>
               </button>
               <div class="screen-volume-control">
-                <span class="screen-volume-icon" aria-hidden="true">
+                <button id="screen-volume-toggle" class="player-button screen-volume-icon" type="button" aria-label="Silenciar transmissão" title="Volume da transmissão">
                   <svg viewBox="0 0 24 24" focusable="false">
                     <path d="M4 10v4h4l5 4V6l-5 4H4Z" />
                     <path d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10" />
                   </svg>
-                </span>
+                </button>
+                <div class="volume-popover">
                 <label class="audio-range-label" for="screen-volume">
                   <span>Volume</span>
                   <output id="screen-volume-value" for="screen-volume">100%</output>
                 </label>
                 <input id="screen-volume" type="range" min="0" max="100" step="1" value="100" disabled />
+                </div>
               </div>
+              <div id="stream-switcher" class="stream-switcher" aria-label="Trocar transmissão"></div>
             </div>
             <button id="reconnect-call" class="ghost reconnect-button" hidden>↻ &nbsp;Reconectar chamadas</button>
             <div id="screen-share-list" class="screen-share-list" aria-live="polite"></div>
@@ -181,42 +200,56 @@
             </section>
           </div>
         </section>
+        <section id="text-view" class="chat-card" hidden>
+          <header class="chat-header"><div><strong id="chat-title">Chat da sala</strong><span>Somente quem estava presente recebe cada mensagem.</span></div></header>
+          <div id="chat-messages" class="chat-messages" aria-live="polite"><div id="chat-empty" class="chat-empty"><strong>Comece a conversa</strong><span>Links, mensagens e imagens leves ficam no host e são entregues apenas a quem estava na sala.</span></div></div>
+          <form id="chat-form" class="chat-composer">
+            <button id="chat-image-open" class="chat-attach" type="button" title="Enviar imagem" aria-label="Enviar imagem"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg></button>
+            <input id="chat-image-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" />
+            <input id="chat-input" maxlength="2000" autocomplete="off" placeholder="Mensagem para a sala" aria-label="Mensagem" />
+            <button class="chat-send" type="submit" aria-label="Enviar"><svg viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8-8-2Z"/></svg></button>
+          </form>
+        </section>
       </section>
 
       <section id="source-picker" class="source-picker" hidden aria-labelledby="source-picker-title">
         <div class="source-picker-card modal-card">
-          <div class="modal-header">
-            <div><span class="eyebrow">04 / TELA</span><h2 id="source-picker-title">Escolha o que compartilhar</h2></div>
+          <div class="modal-header source-picker-header">
+            <div><h2 id="source-picker-title">Compartilhar tela</h2><span class="small muted">Escolha uma tela ou janela</span></div>
             <button id="cancel-source" class="modal-close ghost" type="button" aria-label="Cancelar">×</button>
           </div>
-          <p class="muted">Selecione uma janela ou monitor. A qualidade menor economiza banda.</p>
+          <div class="source-preferences">
+            <label class="source-quality-field" for="screen-quality"><span>Qualidade</span>
+              <select id="screen-quality">
+                <option value="economic">Econômico · 480p/30</option>
+                <option value="balanced">Equilibrado · 720p/30</option>
+                <option value="sharp">Nitidez · 1080p/30</option>
+                <option value="fluid">Fluido · 720p/60</option>
+                <option value="maximum">Máximo · 1080p/60 (muito pesado)</option>
+              </select>
+              <small id="screen-quality-recommendation" class="muted">Analisando sua conexão…</small>
+            </label>
+            <label class="screen-audio-option" for="include-screen-audio">
+              <input id="include-screen-audio" type="checkbox" checked>
+              <span>Áudio do sistema</span>
+            </label>
+          </div>
           <div id="source-list" class="source-list"></div>
-          <label class="small muted" for="screen-quality">Qualidade da transmissão</label>
-          <select id="screen-quality">
-            <option value="balanced">Equilibrado · 720p/30 (recomendado)</option>
-            <option value="economic">Econômico · 480p/30 (menos banda)</option>
-            <option value="sharp">Nitidez · 1080p/30 (texto e trabalho)</option>
-            <option value="fluid">Fluido · 720p/60 (vídeo e jogos)</option>
-          </select>
-          <p class="screen-quality-note muted">A qualidade pode ser reduzida automaticamente para cada espectador quando a rede ficar instável.</p>
-          <label class="screen-audio-option" for="include-screen-audio">
-            <input id="include-screen-audio" type="checkbox">
-            <span>Incluir áudio do sistema</span>
-          </label>
-          <p class="screen-audio-note muted">O áudio do sistema pode incluir o Discord e outros aplicativos. Deixe desmarcado para evitar eco.</p>
+          <p class="screen-quality-note muted">A transmissão adapta a qualidade quando a rede ficar instável.</p>
         </div>
       </section>
 
       <section id="audio-settings-modal" class="modal-overlay" hidden aria-labelledby="audio-settings-title">
         <div class="modal-card audio-modal" role="dialog" aria-modal="true">
           <div class="modal-header">
-            <div><span class="eyebrow">AJUSTES</span><h2 id="audio-settings-title">Áudio</h2></div>
+            <div><span class="eyebrow">PREFERÊNCIAS</span><h2 id="audio-settings-title">Configurações</h2></div>
             <button id="audio-settings-close" class="modal-close ghost" type="button" aria-label="Fechar">×</button>
           </div>
-          <div class="settings-tabs" role="tablist" aria-label="Modo de áudio">
-            <button type="button" class="settings-tab">Simples</button>
-            <button type="button" class="settings-tab is-active">Avançado</button>
+          <div class="settings-tabs" role="tablist" aria-label="Categorias">
+            <button id="settings-audio-tab" type="button" class="settings-tab is-active">Áudio e app</button>
+            <button id="settings-room-tab" type="button" class="settings-tab">Sala</button>
           </div>
+          <div id="settings-audio-pane" class="settings-pane">
           <div class="settings-section">
             <div class="settings-section-title">⌁ &nbsp; DISPOSITIVOS</div>
             <label class="small muted" for="microphone-select">Entrada</label>
@@ -251,8 +284,52 @@
               <button id="app-update-check" class="ghost" type="button">Verificar atualizações</button>
             </div>
           </section>
-          <div class="settings-footer"><button id="audio-settings-reset" class="ghost" type="button">Restaurar padrão</button><button id="audio-settings-apply" class="primary" type="button">Aplicar</button></div>
+          <section class="settings-section" aria-labelledby="presence-settings-title">
+            <div id="presence-settings-title" class="settings-section-title">AVISOS DA SALA</div>
+            <label class="audio-option"><input id="presence-notifications" type="checkbox" checked /><span>Sons e notificações de entrada e saída</span></label>
+          </section>
+          </div>
+          <div id="settings-room-pane" class="settings-pane" hidden>
+            <section id="room-settings-section" class="settings-section room-settings-section">
+              <div class="settings-section-title">SALA E PERMISSÕES</div>
+              <p id="room-settings-hint" class="small muted">Somente o host e moderadores autorizados podem alterar estes dados.</p>
+              <label class="room-setting-field" for="room-chat-name"><span>Nome do chat</span><input id="room-chat-name" maxlength="40" /></label>
+              <button id="room-chat-name-save" class="primary" type="button">Salvar nome</button>
+              <div id="room-permission-controls" class="room-permission-controls">
+                <label class="room-setting-field" for="room-moderator-select"><span>Permissão para configurar a sala</span><select id="room-moderator-select"></select></label>
+                <button id="room-moderator-toggle" class="ghost" type="button">Conceder permissão</button>
+              </div>
+            </section>
+            <section class="settings-section">
+              <div class="test-heading"><span class="settings-section-title">BANS ATIVOS</span><button id="room-bans-refresh" class="ghost compact-button" type="button">Atualizar</button></div>
+              <div id="room-bans-list" class="room-bans-list"><span class="small muted">Nenhum ban carregado.</span></div>
+            </section>
+          </div>
+          <div id="settings-footer" class="settings-footer"><button id="audio-settings-reset" class="ghost" type="button">Restaurar padrão</button><button id="audio-settings-apply" class="primary" type="button">Aplicar</button></div>
         </div>
+      </section>
+
+      <div id="context-menu" class="context-menu" role="menu" hidden>
+        <strong id="context-menu-title">Controles locais</strong>
+        <button id="context-menu-mute" class="context-menu-action" type="button">Silenciar</button>
+        <label class="context-volume" for="context-menu-volume">
+          <span>Volume</span>
+          <output id="context-menu-volume-value" for="context-menu-volume">100%</output>
+        </label>
+        <input id="context-menu-volume" type="range" min="0" max="100" step="1" value="100" />
+        <button id="context-menu-watch" class="context-menu-action" type="button">Assistir transmissão</button>
+        <div id="context-menu-moderation" class="context-moderation">
+          <span>Votação da sala</span>
+          <button id="context-vote-mute" class="context-menu-action" type="button">Mutar por 30 segundos</button>
+          <div class="context-ban-row"><input id="context-ban-seconds" type="number" min="1" max="31536000" value="60" aria-label="Segundos do ban" /><button id="context-vote-ban-temp" class="context-menu-action danger" type="button">Banir</button></div>
+          <button id="context-vote-ban-permanent" class="context-menu-action danger" type="button">Banir permanentemente</button>
+        </div>
+        <button id="context-menu-close-stream" class="context-menu-action danger" type="button">Fechar transmissão</button>
+      </div>
+      <section id="vote-panel" class="vote-panel" hidden aria-live="polite">
+        <div><strong id="vote-title">Votação</strong><span id="vote-details"></span></div>
+        <div class="vote-progress"><span id="vote-counts"></span><time id="vote-time"></time></div>
+        <div id="vote-actions" class="vote-actions"><button id="vote-yes" class="primary" type="button">Aprovar</button><button id="vote-no" class="ghost" type="button">Recusar</button></div>
       </section>
     </main>
     <script src="./app.bundle.js"></script>

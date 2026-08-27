@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { io: connect } = require('socket.io-client');
 const { createSignalingServer } = require('../client/src/main/signaling-server');
+const { LocalServerController } = require('../client/src/main/local-server');
 
 function waitForConnect(socket) {
   if (socket.connected) return Promise.resolve();
@@ -64,4 +65,58 @@ test('signaling local cria sessão única, aceita convidado e encerra com o HOST
   }
   assert.equal(server.getServerStatus().running, false);
   assert.equal(server.httpServer.listening, false);
+});
+
+test('controller escolhe automaticamente a próxima porta livre', async () => {
+  const attemptedPorts = [];
+  const controller = new LocalServerController({
+    createServer: ({ host, port }) => ({
+      start: async () => {
+        attemptedPorts.push(port);
+        if (port === 32145) {
+          const error = new Error('ocupada');
+          error.code = 'EADDRINUSE';
+          throw error;
+        }
+        return { host, port };
+      },
+      stop: async () => {}
+    })
+  });
+
+  const status = await controller.startLocalServer({
+    ip: '26.42.13.7',
+    port: 32145,
+    allowPortFallback: true
+  });
+
+  assert.deepEqual(attemptedPorts, [32145, 32146]);
+  assert.equal(status.port, 32146);
+  assert.equal(status.fallbackUsed, true);
+  assert.equal(status.requestedPort, 32145);
+  await controller.stopLocalServer({ notify: false });
+});
+
+test('controller informa a faixa quando todas as portas de fallback estão ocupadas', async () => {
+  const controller = new LocalServerController({
+    createServer: () => ({
+      start: async () => {
+        const error = new Error('ocupada');
+        error.code = 'EADDRINUSE';
+        throw error;
+      },
+      stop: async () => {}
+    })
+  });
+
+  await assert.rejects(
+    controller.startLocalServer({
+      ip: '26.42.13.7',
+      port: 32145,
+      allowPortFallback: true,
+      maxPortAttempts: 3
+    }),
+    (error) => error.publicCode === 'PORT_IN_USE'
+      && error.publicMessage.includes('32145 a 32147')
+  );
 });

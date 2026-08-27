@@ -11,7 +11,7 @@ test('gera código de sala sem caracteres ambíguos', () => {
   assert.ok([...code].every((character) => ROOM_CODE_ALPHABET.includes(character)));
 });
 
-test('cria sala, entra, atualiza mute e remove sala vazia', () => {
+test('cria sala, entra, atualiza mute e latência e remove sala vazia', () => {
   const store = new RoomStore({ maxUsersPerRoom: 2 });
   const created = store.createRoom('Marcio');
   created.participant.socketId = 'socket-a';
@@ -20,6 +20,8 @@ test('cria sala, entra, atualiza mute e remove sala vazia', () => {
 
   assert.equal(created.room.participants.size, 2);
   assert.equal(store.setMuted('socket-b', true).participant.muted, true);
+  assert.equal(store.setLatency('socket-b', 42.7).participant.latencyMs, 43);
+  assert.equal(store.serializeRoom(created.room).participants[1].latencyMs, 43);
   assert.throws(() => store.joinRoom(created.room.code, 'Pedro'), /ROOM_FULL/);
 
   const removedA = store.leaveSocket('socket-a');
@@ -46,6 +48,19 @@ test('permite até duas transmissões e bloqueia a terceira', () => {
   store.stopScreenShare('socket-a');
   assert.equal(store.stopScreenShare('socket-b').participant.screenSharing, false);
   assert.equal(store.startScreenShare('socket-a').participant.screenSharing, true);
+});
+
+test('host delega configuração da sala e moderador renomeia o chat', () => {
+  const store = new RoomStore();
+  const created = store.createRoom('Host');
+  created.participant.socketId = 'socket-host';
+  const joined = store.joinRoom(created.room.code, 'Moderador');
+  joined.participant.socketId = 'socket-moderator';
+
+  assert.throws(() => store.updateSettings('socket-moderator', { chatName: 'Projetos' }), /PERMISSION_DENIED/);
+  store.setModerator('socket-host', joined.participant.participantId, true);
+  assert.equal(store.updateSettings('socket-moderator', { chatName: 'Projetos' }).room.chatName, 'Projetos');
+  assert.deepEqual(store.serializeRoom(created.room).moderatorParticipantIds, [joined.participant.participantId]);
 });
 
 test('normaliza nome e código e rejeita entradas inválidas', () => {

@@ -2,7 +2,7 @@ const path = require('node:path');
 const { app, BrowserWindow, desktopCapturer, ipcMain, Menu, nativeImage, session, shell, Tray } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { LocalServerController } = require('./local-server');
-const { getNetworkInterfaces, getPreferredVpnAddress, getVpnCandidates } = require('./network');
+const { discoverVpnPeers, getNetworkInterfaces, getPreferredVpnAddress, getVpnCandidates } = require('./network');
 const { normalizeHostAddress } = require('../../../shared/validation');
 
 let mainWindow;
@@ -27,6 +27,8 @@ function signalingOrigin(value) {
 }
 
 const localServer = new LocalServerController({
+  historyFile: path.join(app.getPath('userData'), 'chat-history.json'),
+  moderationFile: path.join(app.getPath('userData'), 'moderation.json'),
   onState: (state) => {
     if (mainWindow?.webContents && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('local-server:state', state);
@@ -182,9 +184,12 @@ function createWindow() {
     minWidth: 900,
     minHeight: 640,
     show: false,
+    frame: false,
+    transparent: true,
+    roundedCorners: true,
     icon: path.join(__dirname, '..', '..', 'assets', 'voice-icon.png'),
     autoHideMenuBar: true,
-    backgroundColor: '#0e1117',
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -212,6 +217,8 @@ function createWindow() {
     mainWindow.setSkipTaskbar(true);
   });
   mainWindow.on('show', () => mainWindow.setSkipTaskbar(false));
+  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized', true));
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized', false));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
     return { action: 'deny' };
@@ -240,6 +247,15 @@ app.whenReady().then(() => {
   );
 
   ipcMain.handle('app:get-version', () => app.getVersion());
+  ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+  ipcMain.handle('window:toggle-maximize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return mainWindow.isMaximized();
+  });
+  ipcMain.handle('window:close', () => mainWindow?.close());
+  ipcMain.handle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
   ipcMain.handle('app:get-update-state', () => updateState);
   ipcMain.handle('app:update-check', () => checkForUpdates({ manual: true }));
   ipcMain.handle('app:update-install', () => {
@@ -255,6 +271,7 @@ app.whenReady().then(() => {
     const preferred = getPreferredVpnAddress(interfaces);
     return { interfaces, candidates, preferred };
   });
+  ipcMain.handle('network:discover-peers', async () => ({ peers: await discoverVpnPeers() }));
   ipcMain.handle('signaling:set-target', (_event, value) => {
     const origin = signalingOrigin(value);
     if (!origin) return { ok: false, errorCode: 'INVALID_HOST_IP', message: 'O endereço do host não é válido.' };
@@ -279,7 +296,11 @@ app.whenReady().then(() => {
           message: 'O IP selecionado não pertence a uma interface ativa deste computador.'
         };
       }
-      const status = await localServer.startLocalServer({ ip: parsed.host, port: parsed.port });
+      const status = await localServer.startLocalServer({
+        ip: parsed.host,
+        port: parsed.port,
+        allowPortFallback: payload.allowPortFallback === true
+      });
       return { ok: true, data: status };
     } catch (error) {
       return {
@@ -299,9 +320,14 @@ app.whenReady().then(() => {
   ipcMain.handle('desktop-capturer:get-sources', async () => {
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],
-      thumbnailSize: { width: 0, height: 0 }
+      thumbnailSize: { width: 240, height: 135 },
+      fetchWindowIcons: true
     });
-    return sources.map((source) => ({ id: source.id, name: source.name }));
+    return sources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail?.isEmpty() ? null : source.thumbnail.toDataURL()
+    }));
   });
   ipcMain.handle('desktop-capturer:select-source', (_event, sourceId) => {
     if (typeof sourceId !== 'string' || sourceId.length < 1 || sourceId.length > 200) return false;

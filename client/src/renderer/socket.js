@@ -74,7 +74,11 @@ class SocketClient {
       'screen:started',
       'screen:stopped',
       'screen:viewer-joined',
-      'screen:viewer-left'
+      'screen:viewer-left',
+      'chat:message',
+      'vote:state',
+      'moderation:forced-mute',
+      'moderation:banned'
     ]) {
       this.socket.on(event, (payload) => this.onEvent(event, payload));
     }
@@ -127,16 +131,16 @@ class SocketClient {
     });
   }
 
-  async createRoom(displayName, avatar = null) {
-    const response = await this.request('room:create', { displayName, avatar });
+  async createRoom(displayName, avatar = null, profileId) {
+    const response = await this.request('room:create', { displayName, avatar, profileId });
     if (response?.ok) {
       this.resumeContext = { roomCode: LOCAL_ROOM_CODE, resumeToken: response.data.resumeToken };
     }
     return response;
   }
 
-  async joinRoom(displayName, avatar = null) {
-    const response = await this.request('room:join', { roomCode: LOCAL_ROOM_CODE, displayName, avatar });
+  async joinRoom(displayName, avatar = null, profileId) {
+    const response = await this.request('room:join', { roomCode: LOCAL_ROOM_CODE, displayName, avatar, profileId });
     if (response?.ok) {
       this.resumeContext = { roomCode: LOCAL_ROOM_CODE, resumeToken: response.data.resumeToken };
     }
@@ -157,6 +161,26 @@ class SocketClient {
   setMuted(muted) { return this.request('participant:muted', { muted }); }
 
   setProfileAvatar(avatar) { return this.request('participant:profile', { avatar }); }
+
+  sendChatMessage(kind, content) { return this.request('chat:message', { kind, content }); }
+
+  updateRoomSettings(chatName) { return this.request('room:settings-update', { chatName }); }
+
+  setRoomModerator(targetParticipantId, allowed) {
+    return this.request('room:permission-update', { targetParticipantId, allowed });
+  }
+
+  startVote(targetParticipantId, action, durationSeconds = 0) {
+    return this.request('vote:start', { targetParticipantId, action, durationSeconds });
+  }
+
+  castVote(voteId, approve) { return this.request('vote:cast', { voteId, approve }); }
+
+  listBans() { return this.request('moderation:bans-list', {}); }
+
+  revokeBan(banId) { return this.request('moderation:ban-revoke', { banId }); }
+
+  setLatency(latencyMs) { return this.request('participant:latency', { latencyMs }); }
 
   sendSignal(event, targetParticipantId, signal) {
     return this.request(event, { targetParticipantId, signal });

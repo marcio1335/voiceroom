@@ -20,6 +20,9 @@ const elements = {
   networkRefresh: document.querySelector('#network-refresh'),
   networkOther: document.querySelector('#network-other'),
   networkStatus: document.querySelector('#network-status'),
+  networkDiscover: document.querySelector('#network-discover'),
+  networkDiscoveryStatus: document.querySelector('#network-discovery-status'),
+  networkPeerList: document.querySelector('#network-peer-list'),
   participants: document.querySelector('#participants'),
   microphone: document.querySelector('#microphone'),
   voiceMicrophone: document.querySelector('#voice-microphone'),
@@ -46,6 +49,7 @@ const elements = {
   screenShareLabel: document.querySelector('#screen-share-label'),
   screenVolume: document.querySelector('#screen-volume'),
   screenVolumeValue: document.querySelector('#screen-volume-value'),
+  screenVolumeToggle: document.querySelector('#screen-volume-toggle'),
   screenFullscreen: document.querySelector('#screen-fullscreen'),
   screenFullscreenLabel: document.querySelector('#screen-fullscreen-label'),
   reconnect: document.querySelector('#reconnect-call'),
@@ -53,6 +57,7 @@ const elements = {
   leave: document.querySelector('#leave-room'),
   screenStage: document.querySelector('#screen-stage'),
   screenEmptyStage: document.querySelector('#screen-empty-stage'),
+  screenGallery: document.querySelector('#screen-gallery'),
   screenShareList: document.querySelector('#screen-share-list'),
   screenDiagnosticsToggle: document.querySelector('#screen-diagnostics-toggle'),
   screenDiagnostics: document.querySelector('#screen-diagnostics'),
@@ -60,11 +65,34 @@ const elements = {
   sourcePicker: document.querySelector('#source-picker'),
   sourceList: document.querySelector('#source-list'),
   screenQuality: document.querySelector('#screen-quality'),
+  screenQualityRecommendation: document.querySelector('#screen-quality-recommendation'),
   includeScreenAudio: document.querySelector('#include-screen-audio'),
   cancelSource: document.querySelector('#cancel-source'),
   status: document.querySelector('#status'),
   latency: document.querySelector('#latency'),
   notice: document.querySelector('#notice'),
+  themeToggle: document.querySelector('#theme-toggle'),
+  windowMinimize: document.querySelector('#window-minimize'),
+  windowMaximize: document.querySelector('#window-maximize'),
+  windowClose: document.querySelector('#window-close'),
+  stageArea: document.querySelector('#stage-area'),
+  roomDuration: document.querySelector('#room-duration'),
+  voiceChannel: document.querySelector('#voice-channel'),
+  textChannel: document.querySelector('#text-channel'),
+  textChannelName: document.querySelector('#text-channel-name'),
+  voiceView: document.querySelector('#voice-view'),
+  textView: document.querySelector('#text-view'),
+  playerOnline: document.querySelector('#player-online'),
+  streamSwitcher: document.querySelector('#stream-switcher'),
+  presenceToasts: document.querySelector('#presence-toasts'),
+  presenceNotifications: document.querySelector('#presence-notifications'),
+  chatMessages: document.querySelector('#chat-messages'),
+  chatTitle: document.querySelector('#chat-title'),
+  chatEmpty: document.querySelector('#chat-empty'),
+  chatForm: document.querySelector('#chat-form'),
+  chatInput: document.querySelector('#chat-input'),
+  chatImageOpen: document.querySelector('#chat-image-open'),
+  chatImageInput: document.querySelector('#chat-image-input'),
   appUpdate: document.querySelector('#app-update'),
   appUpdateTitle: document.querySelector('#app-update-title'),
   appUpdateMessage: document.querySelector('#app-update-message'),
@@ -75,7 +103,41 @@ const elements = {
   appVersionLabel: document.querySelector('#app-version-label'),
   profileBadge: document.querySelector('#profile-badge'),
   profilePhotoInput: document.querySelector('#profile-photo-input'),
-  landingAvatar: document.querySelector('#landing-avatar')
+  landingAvatar: document.querySelector('#landing-avatar'),
+  profileLocalNote: document.querySelector('#profile-local-note'),
+  contextMenu: document.querySelector('#context-menu'),
+  contextMenuTitle: document.querySelector('#context-menu-title'),
+  contextMenuMute: document.querySelector('#context-menu-mute'),
+  contextMenuVolume: document.querySelector('#context-menu-volume'),
+  contextMenuVolumeValue: document.querySelector('#context-menu-volume-value'),
+  contextMenuCloseStream: document.querySelector('#context-menu-close-stream'),
+  contextMenuWatch: document.querySelector('#context-menu-watch'),
+  contextMenuModeration: document.querySelector('#context-menu-moderation'),
+  contextVoteMute: document.querySelector('#context-vote-mute'),
+  contextBanSeconds: document.querySelector('#context-ban-seconds'),
+  contextVoteBanTemp: document.querySelector('#context-vote-ban-temp'),
+  contextVoteBanPermanent: document.querySelector('#context-vote-ban-permanent'),
+  settingsAudioTab: document.querySelector('#settings-audio-tab'),
+  settingsRoomTab: document.querySelector('#settings-room-tab'),
+  settingsAudioPane: document.querySelector('#settings-audio-pane'),
+  settingsRoomPane: document.querySelector('#settings-room-pane'),
+  settingsFooter: document.querySelector('#settings-footer'),
+  roomSettingsHint: document.querySelector('#room-settings-hint'),
+  roomChatName: document.querySelector('#room-chat-name'),
+  roomChatNameSave: document.querySelector('#room-chat-name-save'),
+  roomPermissionControls: document.querySelector('#room-permission-controls'),
+  roomModeratorSelect: document.querySelector('#room-moderator-select'),
+  roomModeratorToggle: document.querySelector('#room-moderator-toggle'),
+  roomBansRefresh: document.querySelector('#room-bans-refresh'),
+  roomBansList: document.querySelector('#room-bans-list'),
+  votePanel: document.querySelector('#vote-panel'),
+  voteTitle: document.querySelector('#vote-title'),
+  voteDetails: document.querySelector('#vote-details'),
+  voteCounts: document.querySelector('#vote-counts'),
+  voteTime: document.querySelector('#vote-time'),
+  voteActions: document.querySelector('#vote-actions'),
+  voteYes: document.querySelector('#vote-yes'),
+  voteNo: document.querySelector('#vote-no')
 };
 
 let socketClient;
@@ -83,6 +145,7 @@ let peerManager;
 let selfId;
 let roomCode;
 let hostIp = '';
+let hostPort = DEFAULT_SIGNALING_PORT;
 let roomRole = null;
 let signalingUrl = null;
 let networkInfo = null;
@@ -96,6 +159,7 @@ let selectedScreenParticipantId = null;
 let watchingScreenParticipantId = null;
 let screenWatchActionInProgress = false;
 let latencyTimer = null;
+let lastMeasuredLatency = null;
 let reconnectInProgress = false;
 let capturingPttKey = false;
 let pttPressed = false;
@@ -110,10 +174,25 @@ const screenQualityWarnings = new Set();
 const speakingParticipants = new Set();
 const speakingMonitors = new Map();
 let speakingAudioContext = null;
+let contextMenuTarget = null;
+let lastMaximumScreenWarningAt = -Infinity;
+let previousScreenVolumeLevel = 1;
+let roomDurationTimer = null;
+let roomStartedAt = null;
+let presenceAudioContext = null;
+let presenceReady = false;
+let previousParticipants = new Map();
+let chatMessages = [];
+let activeVote = null;
+let voteTimer = null;
+let forcedMutedUntil = null;
+const participantVolumeBeforeMute = new Map();
 const PARTICIPANT_VOLUME_STORAGE_KEY = 'voiceroom.participantVolumes';
 const DISPLAY_NAME_STORAGE_KEY = 'voiceroom.displayName';
 const SCREEN_QUALITY_STORAGE_KEY = 'voiceroom.screenQuality';
 const PROFILE_AVATAR_STORAGE_KEY = 'voiceroom.profileAvatar';
+const THEME_STORAGE_KEY = 'voiceroom.theme';
+const PROFILE_ID_STORAGE_KEY = 'voiceroom.profileId';
 const MAX_PROFILE_AVATAR_LENGTH = 32_000;
 
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
@@ -124,7 +203,8 @@ const DEFAULT_AUDIO_SETTINGS = Object.freeze({
   processMicrophoneTest: false,
   inputGain: 1,
   pushToTalk: false,
-  pushToTalkKey: 'Space'
+  pushToTalkKey: 'Space',
+  presenceNotifications: true
 });
 
 const AUDIO_PROCESSING_LABELS = Object.freeze({
@@ -151,6 +231,7 @@ function loadAudioSettings() {
       processMicrophoneTest: saved.processMicrophoneTest === true,
       inputGain: clampInputGain(saved.inputGain),
       pushToTalk: saved.pushToTalk === true,
+      presenceNotifications: saved.presenceNotifications !== false,
       pushToTalkKey: typeof saved.pushToTalkKey === 'string' && saved.pushToTalkKey.length <= 40
         ? saved.pushToTalkKey
         : DEFAULT_AUDIO_SETTINGS.pushToTalkKey
@@ -162,6 +243,19 @@ function loadAudioSettings() {
 
 let audioSettings = loadAudioSettings();
 let profileAvatar = '';
+let profileId = '';
+
+function loadProfileId() {
+  try {
+    const saved = localStorage.getItem(PROFILE_ID_STORAGE_KEY);
+    if (saved && /^[a-f0-9-]{16,64}$/i.test(saved)) return saved;
+    const created = crypto.randomUUID();
+    localStorage.setItem(PROFILE_ID_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
 
 function normalizeAvatarData(value) {
   if (typeof value !== 'string' || value.length > MAX_PROFILE_AVATAR_LENGTH) return '';
@@ -299,6 +393,7 @@ function syncAudioSettingsControls() {
   elements.processMicrophoneTest.checked = audioSettings.processMicrophoneTest;
   elements.pushToTalk.checked = audioSettings.pushToTalk;
   elements.pushToTalkKey.textContent = formatPttKey(audioSettings.pushToTalkKey);
+  if (elements.presenceNotifications) elements.presenceNotifications.checked = audioSettings.presenceNotifications;
   elements.microphoneGain.value = String(Math.round(audioSettings.inputGain * 100));
   elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
 }
@@ -311,7 +406,8 @@ function collectAudioSettingsFromControls() {
     processMicrophoneTest: elements.processMicrophoneTest.checked,
     inputGain: clampInputGain(Number(elements.microphoneGain.value) / 100),
     pushToTalk: elements.pushToTalk.checked,
-    pushToTalkKey: audioSettings.pushToTalkKey
+    pushToTalkKey: audioSettings.pushToTalkKey,
+    presenceNotifications: elements.presenceNotifications?.checked !== false
   };
 }
 
@@ -373,6 +469,108 @@ function loadLocalPreferences() {
     if (savedQuality) screenQuality = normalizeScreenProfile(savedQuality);
   } catch { /* armazenamento opcional */ }
   setScreenQuality(screenQuality);
+  renderLocalProfileNote();
+}
+
+function applyTheme(value) {
+  const theme = value === 'dark' ? 'dark' : 'light';
+  document.body.dataset.theme = theme;
+  if (elements.themeToggle) {
+    elements.themeToggle.textContent = theme === 'dark' ? '☼' : '☾';
+    elements.themeToggle.title = theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro';
+  }
+  try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* armazenamento opcional */ }
+}
+
+function closeContextMenu() {
+  contextMenuTarget = null;
+  if (elements.contextMenu) elements.contextMenu.hidden = true;
+}
+
+function positionContextMenu(x, y) {
+  const menu = elements.contextMenu;
+  if (!menu) return;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8))}px`;
+}
+
+function syncContextMenu() {
+  if (!contextMenuTarget || !elements.contextMenu) return;
+  const { kind, participantId } = contextMenuTarget;
+  const participant = currentRoom?.participants.find((entry) => entry.participantId === participantId);
+  const isScreen = kind === 'screen';
+  const value = isScreen ? screenVolumeLevel : getParticipantVolume(participantId);
+  elements.contextMenuTitle.textContent = isScreen
+    ? `Transmissão de ${participant?.displayName || 'participante'}`
+    : participant?.displayName || 'Participante';
+  elements.contextMenuVolume.value = String(Math.round(value * 100));
+  elements.contextMenuVolumeValue.textContent = `${Math.round(value * 100)}%`;
+  elements.contextMenuMute.textContent = value === 0 ? 'Voltar a ouvir' : 'Silenciar para mim';
+  elements.contextMenuCloseStream.hidden = !isScreen;
+  const isParticipant = kind === 'participant';
+  elements.contextMenuWatch.hidden = !isParticipant || !participant?.screenSharing;
+  elements.contextMenuModeration.hidden = !isParticipant || participant?.role === 'host';
+}
+
+function openContextMenu(kind, participantId, x, y) {
+  if (!participantId || (kind === 'participant' && participantId === selfId)) return;
+  contextMenuTarget = { kind, participantId };
+  syncContextMenu();
+  positionContextMenu(x, y);
+}
+
+function setContextTargetVolume(percentage) {
+  if (!contextMenuTarget) return;
+  const normalized = Math.min(100, Math.max(0, Number(percentage))) / 100;
+  if (contextMenuTarget.kind === 'screen') setScreenVolume(normalized * 100);
+  else setParticipantVolume(contextMenuTarget.participantId, normalized);
+  syncContextMenu();
+}
+
+function toggleContextTargetMute() {
+  if (!contextMenuTarget) return;
+  if (contextMenuTarget.kind === 'screen') {
+    if (screenVolumeLevel > 0) {
+      elements.contextMenuMute.dataset.restoreVolume = String(screenVolumeLevel);
+      setScreenVolume(0);
+    } else {
+      setScreenVolume(Number(elements.contextMenuMute.dataset.restoreVolume || 0.75) * 100);
+    }
+  } else {
+    const participantId = contextMenuTarget.participantId;
+    const current = getParticipantVolume(participantId);
+    if (current > 0) {
+      participantVolumeBeforeMute.set(participantId, current);
+      setParticipantVolume(participantId, 0);
+    } else {
+      setParticipantVolume(participantId, participantVolumeBeforeMute.get(participantId) || 0.75);
+    }
+  }
+  syncContextMenu();
+}
+
+async function watchContextTransmission() {
+  const participantId = contextMenuTarget?.participantId;
+  closeContextMenu();
+  if (!participantId) return;
+  switchChannel('voice');
+  await toggleScreenWatching(participantId);
+}
+
+async function startContextVote(action, durationSeconds = 0) {
+  const participantId = contextMenuTarget?.participantId;
+  closeContextMenu();
+  if (!participantId) return;
+  const response = await socketClient?.startVote(participantId, action, durationSeconds);
+  if (!response?.ok) showNotice(responseError(response), 'warning');
+}
+
+function renderLocalProfileNote() {
+  if (!elements.profileLocalNote) return;
+  elements.profileLocalNote.textContent = elements.name.value.trim()
+    ? 'Perfil local salvo neste computador. Você não precisará digitar o nome de novo.'
+    : 'Seu perfil ficará salvo somente neste computador.';
 }
 
 function renderAudioProcessingStatus(settings = {}) {
@@ -441,6 +639,8 @@ async function changeAudioProcessing() {
 
 function openAudioSettings() {
   if (!elements.audioSettingsModal) return;
+  renderRoomSettings();
+  switchSettingsPane('audio');
   elements.audioSettingsModal.hidden = false;
   elements.audioSettingsClose?.focus();
 }
@@ -506,11 +706,40 @@ function updateLatencyLabel(value) {
   elements.latency.dataset.type = value > 300 ? 'error' : value > 180 ? 'warning' : 'success';
 }
 
+function getRecommendedScreenQuality() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const downlink = Number(connection?.downlink);
+  const hasDownlink = Number.isFinite(downlink) && downlink > 0;
+  const latency = Number(lastMeasuredLatency);
+  const hasLatency = Number.isFinite(latency);
+  let profile = 'balanced';
+  if ((hasDownlink && downlink < 3) || (hasLatency && latency > 220)) profile = 'economic';
+  else if (hasDownlink && downlink >= 25 && (!hasLatency || latency <= 45)) profile = 'maximum';
+  else if (hasDownlink && downlink >= 10 && (!hasLatency || latency <= 90)) profile = 'fluid';
+  else if (hasDownlink && downlink >= 7 && (!hasLatency || latency <= 120)) profile = 'sharp';
+  const details = [
+    hasDownlink ? `${downlink.toFixed(downlink >= 10 ? 0 : 1)} Mbps` : null,
+    hasLatency ? `${Math.round(latency)} ms` : null
+  ].filter(Boolean).join(' · ');
+  return { profile, details };
+}
+
+function syncScreenQualityRecommendation({ select = false } = {}) {
+  if (!elements.screenQualityRecommendation || !elements.screenQuality) return;
+  const recommendation = getRecommendedScreenQuality();
+  const label = elements.screenQuality.querySelector(`option[value="${recommendation.profile}"]`)?.textContent || recommendation.profile;
+  elements.screenQualityRecommendation.textContent = `Recomendado para sua conexão: ${label}${recommendation.details ? ` · ${recommendation.details}` : ''}`;
+  if (select) elements.screenQuality.value = recommendation.profile;
+}
+
 async function updateLatency() {
   if (!roomCode || !socketClient) return;
   const mediaLatency = await peerManager?.getLatency?.();
   const latency = Number.isFinite(mediaLatency) ? mediaLatency : await socketClient.measureLatency();
+  lastMeasuredLatency = Number.isFinite(latency) ? latency : null;
   updateLatencyLabel(latency);
+  syncScreenQualityRecommendation();
+  if (Number.isFinite(latency)) socketClient.setLatency(latency).catch(() => {});
 }
 
 function startLatencyMonitoring() {
@@ -545,12 +774,308 @@ async function reconnectCalls() {
   }
 }
 
-function showNotice(message, type = 'error') {
+function showNotice(message, type = 'error', duration = 6_000) {
   elements.notice.textContent = message;
   elements.notice.dataset.type = type;
   elements.notice.hidden = false;
   window.clearTimeout(showNotice.timeout);
-  showNotice.timeout = window.setTimeout(() => { elements.notice.hidden = true; }, 6_000);
+  showNotice.timeout = window.setTimeout(() => { elements.notice.hidden = true; }, duration);
+}
+
+function canManageCurrentRoom() {
+  const self = currentRoom?.participants?.find((participant) => participant.participantId === selfId);
+  return Boolean(self && (self.role === 'host' || currentRoom?.moderatorParticipantIds?.includes(selfId)));
+}
+
+function switchSettingsPane(pane) {
+  const room = pane === 'room';
+  elements.settingsAudioPane.hidden = room;
+  elements.settingsRoomPane.hidden = !room;
+  elements.settingsFooter.hidden = room;
+  elements.settingsAudioTab.classList.toggle('is-active', !room);
+  elements.settingsRoomTab.classList.toggle('is-active', room);
+  if (room) loadRoomBans();
+}
+
+function renderRoomSettings() {
+  if (!elements.roomChatName || !currentRoom) return;
+  const manageable = canManageCurrentRoom();
+  const self = currentRoom.participants.find((participant) => participant.participantId === selfId);
+  elements.roomChatName.value = currentRoom.chatName || 'Chat da sala';
+  elements.roomChatName.disabled = !manageable;
+  elements.roomChatNameSave.disabled = !manageable;
+  elements.roomSettingsHint.textContent = manageable
+    ? 'Você pode alterar a sala. Mudanças são sincronizadas para todos.'
+    : 'Somente o host ou um moderador autorizado pode alterar a sala.';
+  elements.roomPermissionControls.hidden = self?.role !== 'host';
+  elements.roomBansRefresh.disabled = !manageable;
+  elements.roomModeratorSelect.replaceChildren();
+  for (const participant of currentRoom.participants.filter((item) => item.role !== 'host')) {
+    const option = document.createElement('option');
+    option.value = participant.participantId;
+    const moderator = currentRoom.moderatorParticipantIds?.includes(participant.participantId);
+    option.textContent = `${participant.displayName}${moderator ? ' · autorizado' : ''}`;
+    elements.roomModeratorSelect.append(option);
+  }
+  syncModeratorButton();
+}
+
+function syncModeratorButton() {
+  const participantId = elements.roomModeratorSelect?.value;
+  const allowed = currentRoom?.moderatorParticipantIds?.includes(participantId);
+  elements.roomModeratorToggle.textContent = allowed ? 'Remover permissão' : 'Conceder permissão';
+  elements.roomModeratorToggle.disabled = !participantId;
+}
+
+async function loadRoomBans() {
+  if (!canManageCurrentRoom()) {
+    elements.roomBansList.innerHTML = '<span class="small muted">Sem permissão para consultar bans.</span>';
+    return;
+  }
+  const response = await socketClient?.listBans();
+  if (!response?.ok) return;
+  renderRoomBans(response.data.bans);
+}
+
+function renderRoomBans(bans = []) {
+  elements.roomBansList.replaceChildren();
+  if (!bans.length) {
+    const empty = document.createElement('span');
+    empty.className = 'small muted';
+    empty.textContent = 'Nenhum ban ativo.';
+    elements.roomBansList.append(empty);
+    return;
+  }
+  for (const ban of bans) {
+    const row = document.createElement('div');
+    row.className = 'room-ban-row';
+    const copy = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = ban.displayName || 'Perfil';
+    const expiry = document.createElement('span');
+    expiry.textContent = ban.expiresAt ? `Até ${new Date(ban.expiresAt).toLocaleString('pt-BR')}` : 'Permanente';
+    copy.append(name, expiry);
+    const revoke = document.createElement('button');
+    revoke.type = 'button';
+    revoke.className = 'ghost compact-button';
+    revoke.textContent = 'Remover';
+    revoke.addEventListener('click', async () => {
+      const response = await socketClient.revokeBan(ban.id);
+      if (response?.ok) renderRoomBans(response.data.bans);
+      else showNotice(responseError(response));
+    });
+    row.append(copy, revoke);
+    elements.roomBansList.append(row);
+  }
+}
+
+function renderVote(vote) {
+  activeVote = vote;
+  window.clearInterval(voteTimer);
+  if (!vote || vote.status !== 'active') {
+    if (vote) showPresenceToast(vote.status === 'passed' ? 'A votação foi aprovada.' : 'A votação foi encerrada sem aprovação.', vote.status === 'passed' ? 'join' : 'leave');
+    elements.votePanel.hidden = true;
+    voteTimer = null;
+    return;
+  }
+  const action = vote.action === 'mute'
+    ? 'mutar por 30 segundos'
+    : vote.durationSeconds ? `banir por ${vote.durationSeconds} segundos` : 'banir permanentemente';
+  elements.voteTitle.textContent = `Votação sobre ${vote.targetDisplayName}`;
+  elements.voteDetails.textContent = `Proposta: ${action}.`;
+  elements.voteCounts.textContent = `${vote.yes} sim · ${vote.no} não · ${vote.threshold} necessários`;
+  elements.voteActions.hidden = false;
+  elements.votePanel.hidden = false;
+  const updateTime = () => {
+    const seconds = Math.max(0, Math.ceil((vote.endsAt - Date.now()) / 1_000));
+    elements.voteTime.textContent = `${seconds}s`;
+  };
+  updateTime();
+  voteTimer = window.setInterval(updateTime, 250);
+}
+
+function playPresenceTone(kind = 'join') {
+  if (!audioSettings.presenceNotifications) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    presenceAudioContext ||= new AudioContextClass({ latencyHint: 'interactive' });
+    presenceAudioContext.resume().catch(() => {});
+    const oscillator = presenceAudioContext.createOscillator();
+    const gain = presenceAudioContext.createGain();
+    const now = presenceAudioContext.currentTime;
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(kind === 'join' ? 520 : 700, now);
+    oscillator.frequency.exponentialRampToValueAtTime(kind === 'join' ? 760 : 430, now + .16);
+    gain.gain.setValueAtTime(.0001, now);
+    gain.gain.exponentialRampToValueAtTime(.09, now + .018);
+    gain.gain.exponentialRampToValueAtTime(.0001, now + .2);
+    oscillator.connect(gain).connect(presenceAudioContext.destination);
+    oscillator.start(now);
+    oscillator.stop(now + .21);
+  } catch { /* aviso visual continua disponível */ }
+}
+
+function showPresenceToast(message, kind = 'join') {
+  if (!audioSettings.presenceNotifications || !elements.presenceToasts) return;
+  playPresenceTone(kind);
+  const toast = document.createElement('div');
+  toast.className = 'presence-toast';
+  toast.dataset.kind = kind;
+  toast.textContent = message;
+  elements.presenceToasts.append(toast);
+  window.setTimeout(() => toast.remove(), 5_000);
+}
+
+function announceRoomChanges(room) {
+  const next = new Map((room?.participants || []).map((participant) => [participant.participantId, participant]));
+  if (presenceReady) {
+    for (const [id, participant] of next) {
+      if (id !== selfId && participant.connected && !previousParticipants.get(id)?.connected) {
+        showPresenceToast(`${participant.displayName} entrou na sala.`, 'join');
+      }
+    }
+    for (const [id, participant] of previousParticipants) {
+      if (id !== selfId && participant.connected && !next.get(id)?.connected) {
+        showPresenceToast(`${participant.displayName} saiu da sala.`, 'leave');
+      }
+    }
+  }
+  previousParticipants = next;
+  presenceReady = true;
+}
+
+function updateRoomDuration() {
+  if (!elements.roomDuration || !roomStartedAt) return;
+  const elapsed = Math.max(0, Math.floor((Date.now() - roomStartedAt) / 1_000));
+  const hours = Math.floor(elapsed / 3_600);
+  const minutes = Math.floor((elapsed % 3_600) / 60);
+  const seconds = elapsed % 60;
+  elements.roomDuration.textContent = hours
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function startRoomDuration(createdAt) {
+  roomStartedAt = Number(createdAt) || Date.now();
+  window.clearInterval(roomDurationTimer);
+  updateRoomDuration();
+  roomDurationTimer = window.setInterval(updateRoomDuration, 1_000);
+}
+
+function fitScreenStage() {
+  if (!elements.screenStage || !elements.stageArea) return;
+  if (document.body.classList.contains('screen-view-expanded') || elements.screenStage.dataset.active !== 'true') {
+    elements.screenStage.style.width = '100%';
+    elements.screenStage.style.height = '100%';
+    return;
+  }
+  const video = elements.screenStage.querySelector('[data-participant-video]');
+  const ratio = video?.videoWidth > 0 && video?.videoHeight > 0 ? video.videoWidth / video.videoHeight : 16 / 9;
+  const area = elements.stageArea.getBoundingClientRect();
+  if (!area.width || !area.height) return;
+  let width = area.width;
+  let height = width / ratio;
+  if (height > area.height) {
+    height = area.height;
+    width = height * ratio;
+  }
+  elements.screenStage.style.width = `${Math.floor(width)}px`;
+  elements.screenStage.style.height = `${Math.floor(height)}px`;
+}
+
+function renderPlayerOnline() {
+  if (!elements.playerOnline) return;
+  elements.playerOnline.replaceChildren();
+  for (const participant of (currentRoom?.participants || []).filter((item) => item.connected).slice(0, 10)) {
+    const avatar = document.createElement('span');
+    avatar.className = 'player-avatar';
+    avatar.title = participant.displayName;
+    renderAvatarElement(avatar, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
+    elements.playerOnline.append(avatar);
+  }
+}
+
+function switchChannel(channel) {
+  const text = channel === 'text';
+  elements.voiceView.hidden = text;
+  elements.textView.hidden = !text;
+  elements.voiceChannel.classList.toggle('is-active', !text);
+  elements.textChannel.classList.toggle('is-active', text);
+  if (text) elements.chatInput?.focus();
+  else window.requestAnimationFrame(fitScreenStage);
+}
+
+function renderChatMessage(message) {
+  if (!message || document.querySelector(`[data-chat-message="${message.id}"]`)) return;
+  elements.chatEmpty?.remove();
+  const article = document.createElement('article');
+  article.className = 'chat-message';
+  article.dataset.chatMessage = message.id;
+  const avatar = document.createElement('span');
+  avatar.className = 'chat-message-avatar';
+  renderAvatarElement(avatar, normalizeAvatarData(message.author?.avatar), getAvatarInitials(message.author?.displayName || 'V'));
+  const body = document.createElement('div');
+  body.className = 'chat-message-body';
+  const meta = document.createElement('div');
+  meta.className = 'chat-message-meta';
+  const author = document.createElement('strong');
+  author.textContent = message.author?.displayName || 'Participante';
+  const time = document.createElement('time');
+  time.textContent = new Date(message.sentAt || Date.now()).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  meta.append(author, time);
+  if (message.kind === 'image') {
+    const image = document.createElement('img');
+    image.className = 'chat-message-image';
+    image.src = message.content;
+    image.alt = `Imagem enviada por ${author.textContent}`;
+    body.append(meta, image);
+  } else {
+    const content = document.createElement('p');
+    content.className = 'chat-message-content';
+    content.textContent = message.content;
+    body.append(meta, content);
+  }
+  article.append(avatar, body);
+  elements.chatMessages.append(article);
+  elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function loadChatHistory(messages = []) {
+  chatMessages = Array.isArray(messages) ? messages : [];
+  elements.chatMessages.querySelectorAll('.chat-message').forEach((message) => message.remove());
+  for (const message of chatMessages) renderChatMessage(message);
+}
+
+async function sendChat(kind, content) {
+  const response = await socketClient?.sendChatMessage(kind, content);
+  if (!response?.ok) showNotice(responseError(response));
+}
+
+async function sendChatImage(file) {
+  if (!file) return;
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 360_000) {
+    showNotice('Use uma imagem PNG, JPG ou WebP de até 350 KB.', 'warning');
+    return;
+  }
+  const content = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Não foi possível ler a imagem.'));
+    reader.readAsDataURL(file);
+  });
+  await sendChat('image', content);
+}
+
+function warnMaximumScreenQuality() {
+  const now = Date.now();
+  if (now - lastMaximumScreenWarningAt < 4_500) return;
+  lastMaximumScreenWarningAt = now;
+  showNotice(
+    '1080p a 60 fps é um modo muito pesado. Pode aumentar o uso de CPU e afetar a qualidade da sua conexão.',
+    'warning',
+    5_000
+  );
 }
 
 function formatUpdateBytes(value) {
@@ -655,7 +1180,11 @@ async function installApplicationUpdate() {
 function responseError(response) {
   if (response?.errorCode === 'ROOM_NOT_FOUND') return 'Esta sala não existe.';
   if (response?.errorCode === 'ROOM_EXISTS') return 'Já existe uma sala ativa neste computador.';
-  if (response?.errorCode === 'ROOM_FULL') return 'A sala atingiu o limite de 5 participantes.';
+  if (response?.errorCode === 'ROOM_FULL') return 'A sala atingiu o limite de 10 participantes.';
+  if (response?.errorCode === 'PERMISSION_DENIED') return 'Você não tem permissão para fazer isso.';
+  if (response?.errorCode === 'BANNED') return 'Este perfil está banido desta sala.';
+  if (response?.errorCode === 'ALREADY_VOTED') return 'Você já votou ou já existe uma votação ativa.';
+  if (response?.errorCode === 'VOTE_NOT_FOUND') return 'Essa votação já terminou.';
   if (response?.errorCode === 'SCREEN_BUSY') return 'A sala já atingiu o limite de 2 transmissões.';
   if (response?.errorCode === 'SCREEN_NOT_ACTIVE') return 'Essa transmissão não está ativa.';
   if (response?.errorCode === 'PORT_IN_USE') return response.message || `A porta ${DEFAULT_SIGNALING_PORT} já está sendo utilizada por outro aplicativo.`;
@@ -681,36 +1210,59 @@ function renderParticipants() {
     item.dataset.speaking = String(speakingParticipants.has(participant.participantId));
     const state = speakingParticipants.has(participant.participantId)
       ? '●'
-      : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
+      : participant.muted ? '⊘' : participant.connected ? '●' : '○';
     const stateElement = document.createElement('span');
     stateElement.className = 'participant-state';
     stateElement.setAttribute('aria-hidden', 'true');
     renderAvatarElement(stateElement, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
     const nameElement = document.createElement('span');
-    const labels = [];
-    if (participant.role === 'host') labels.push('Host');
-    if (participant.participantId === selfId) labels.push('você');
-    nameElement.textContent = participant.displayName + (labels.length ? ` (${labels.join(', ')})` : '');
-    const identity = document.createElement('span');
+    nameElement.className = 'participant-name';
+    nameElement.textContent = participant.displayName;
+    if (participant.role === 'host') {
+      const crown = document.createElement('span');
+      crown.className = 'host-crown';
+      crown.title = 'Criador da sala';
+      crown.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 8 4 4 4-7 4 7 4-4-2 10H6L4 8Z"/></svg>';
+      nameElement.append(crown);
+    }
+    const identity = document.createElement('button');
     identity.className = 'participant-identity';
+    identity.type = 'button';
+    identity.title = participant.participantId === selfId && !sharingScreen
+      ? 'Clique para compartilhar sua tela'
+      : `Ajustar ${participant.displayName}`;
+    identity.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (participant.participantId === selfId && !sharingScreen) {
+        toggleScreen();
+        return;
+      }
+      if (participant.participantId !== selfId) {
+        const rect = identity.getBoundingClientRect();
+        openContextMenu('participant', participant.participantId, rect.left, rect.bottom + 6);
+      }
+    });
     identity.append(stateElement, nameElement);
+    const latencyElement = document.createElement('span');
+    latencyElement.className = 'participant-latency';
+    latencyElement.textContent = Number.isFinite(participant.latencyMs) ? `${participant.latencyMs} ms` : '— ms';
+    latencyElement.title = 'Latência até o host';
     const statusElement = document.createElement('span');
     statusElement.className = 'participant-status';
     statusElement.setAttribute('aria-hidden', 'true');
     statusElement.textContent = state;
-    item.append(identity, statusElement);
+    if (participant.screenSharing) {
+      const live = document.createElement('i');
+      live.className = 'participant-live';
+      live.title = 'Transmitindo ao vivo';
+      nameElement.append(live);
+    }
+    item.append(identity, latencyElement, statusElement);
     if (participant.participantId !== selfId && participant.connected) {
-      const volume = document.createElement('input');
-      volume.type = 'range';
-      volume.min = '0';
-      volume.max = '100';
-      volume.step = '1';
-      volume.value = String(Math.round(getParticipantVolume(participant.participantId) * 100));
-      volume.className = 'participant-volume';
-      volume.title = `Volume de ${participant.displayName}`;
-      volume.setAttribute('aria-label', `Volume de ${participant.displayName}`);
-      volume.addEventListener('input', () => setParticipantVolume(participant.participantId, Number(volume.value) / 100));
-      item.append(volume);
+      item.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        openContextMenu('participant', participant.participantId, event.clientX, event.clientY);
+      });
     }
     elements.participants.append(item);
   }
@@ -839,6 +1391,9 @@ function renderVoiceControls() {
       ? 'Desative o ensurdecer para ativar o microfone'
       : microphoneMuted ? 'Ativar microfone' : 'Mutar microfone';
     microphoneControl.setAttribute('aria-label', microphoneControl.title);
+    const forced = forcedMutedUntil && forcedMutedUntil > Date.now();
+    microphoneControl.disabled = Boolean(forced);
+    if (forced) microphoneControl.title = `Mutado por votação até ${new Date(forcedMutedUntil).toLocaleTimeString('pt-BR')}`;
   }
 
   const deafenControl = elements.voiceDeafen;
@@ -852,10 +1407,20 @@ function renderVoiceControls() {
 }
 
 function renderRoom(room) {
+  announceRoomChanges(room);
   currentRoom = room;
-  if (elements.activeIp) elements.activeIp.textContent = hostIp || '—';
+  if (elements.activeIp) elements.activeIp.textContent = hostIp ? `${hostIp}:${hostPort}` : '—';
   const screenParticipantIds = getScreenParticipantIds(room);
+  const hasAnyScreen = screenParticipantIds.length > 0 || sharingScreen;
+  elements.voiceChannel.hidden = !hasAnyScreen;
+  if (!hasAnyScreen && !elements.voiceView.hidden) switchChannel('text');
+  const chatName = room.chatName || 'Chat da sala';
+  elements.textChannelName.textContent = chatName;
+  elements.chatTitle.textContent = chatName;
   elements.screen.disabled = !sharingScreen && screenParticipantIds.length >= 2;
+  elements.screen.dataset.sharing = String(sharingScreen);
+  elements.screen.title = sharingScreen ? 'Parar transmissão' : 'Compartilhar tela';
+  elements.screen.setAttribute('aria-label', elements.screen.title);
   if (elements.screenShareLabel) {
     elements.screenShareLabel.textContent = sharingScreen ? 'Parar tela' : 'Compartilhar tela';
   } else {
@@ -868,8 +1433,11 @@ function renderRoom(room) {
   }
   renderScreenShareList(room);
   renderParticipants();
+  renderPlayerOnline();
+  renderRoomSettings();
   peerManager?.syncParticipants(room.participants).catch((error) => showNotice(error.message));
   renderVoiceControls();
+  window.requestAnimationFrame(fitScreenStage);
 }
 
 function renderScreenShareList(room) {
@@ -877,6 +1445,44 @@ function renderScreenShareList(room) {
   const activeParticipants = (room?.participants || []).filter((participant) => (
     participant.screenSharing || (participant.participantId === selfId && sharingScreen)
   ));
+  elements.screenGallery.replaceChildren();
+  elements.streamSwitcher.replaceChildren();
+  const hasVisibleTile = Boolean(elements.screenStage.querySelector('[data-screen-tile]'));
+  elements.screenGallery.hidden = hasVisibleTile || activeParticipants.length === 0;
+  elements.screenEmptyStage.hidden = activeParticipants.length > 0;
+  for (const participant of activeParticipants) {
+    const switchButton = document.createElement('button');
+    switchButton.type = 'button';
+    switchButton.className = 'stream-switch-button';
+    switchButton.classList.toggle('is-active', participant.participantId === selectedScreenParticipantId || participant.participantId === watchingScreenParticipantId);
+    switchButton.title = `Assistir ${participant.displayName}`;
+    renderAvatarElement(switchButton, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
+    switchButton.addEventListener('click', () => {
+      if (participant.participantId === selfId) {
+        if (peerManager?.screenStream) viewOwnScreen();
+        else selectScreenParticipant(selfId);
+      } else toggleScreenWatching(participant.participantId);
+    });
+    elements.streamSwitcher.append(switchButton);
+    if (!hasVisibleTile) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'screen-gallery-card';
+      const avatar = document.createElement('span');
+      avatar.className = 'screen-gallery-avatar';
+      renderAvatarElement(avatar, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
+      const name = document.createElement('strong');
+      name.textContent = participant.displayName;
+      const action = document.createElement('span');
+      action.textContent = participant.participantId === selfId ? 'Sua transmissão' : 'Clique para assistir';
+      card.append(avatar, name, action);
+      card.addEventListener('click', () => {
+        if (participant.participantId === selfId && peerManager?.screenStream) viewOwnScreen();
+        else if (participant.participantId !== selfId) toggleScreenWatching(participant.participantId);
+      });
+      elements.screenGallery.append(card);
+    }
+  }
   if (activeParticipants.some((participant) => participant.participantId !== selfId)) {
     const hint = document.createElement('span');
     hint.className = 'screen-share-hint small muted';
@@ -998,12 +1604,17 @@ function enterRoom(result) {
   selfId = result.data.participantId;
   roomCode = result.data.room.code || LOCAL_ROOM_CODE;
   roomRole = result.data.role || result.data.room.participants.find((participant) => participant.participantId === selfId)?.role || 'guest';
+  presenceReady = false;
+  previousParticipants = new Map();
   elements.landing.hidden = true;
   elements.room.hidden = false;
   if (elements.copyInvite) elements.copyInvite.hidden = roomRole !== 'host';
   if (elements.leave) elements.leave.textContent = roomRole === 'host' ? 'Encerrar sala' : 'Sair da sala';
   setStatus(roomRole === 'host' ? 'Sala local pronta. Envie o IP aos seus amigos.' : 'Sala conectada. Ative o microfone quando quiser.', 'success');
   renderRoom(result.data.room);
+  startRoomDuration(result.data.room.createdAt);
+  loadChatHistory(result.data.chatHistory);
+  switchChannel(getScreenParticipantIds(result.data.room).length ? 'voice' : 'text');
   peerManager = new PeerManager({
     socket: socketClient,
     selfId,
@@ -1053,6 +1664,34 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
     tile.className = 'screen-tile';
     tile.dataset.screenTile = participantId;
     tile.addEventListener('click', () => selectScreenParticipant(participantId));
+    tile.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      selectScreenParticipant(participantId);
+      openContextMenu('screen', participantId, event.clientX, event.clientY);
+    });
+    tile.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      const currentZoom = Number(tile.dataset.zoom || 1);
+      const nextZoom = Math.min(3, Math.max(1, currentZoom + (event.deltaY < 0 ? 0.15 : -0.15)));
+      const videoElement = tile.querySelector('[data-participant-video]');
+      if (!videoElement) return;
+      const rect = tile.getBoundingClientRect();
+      const originX = Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100));
+      const originY = Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100));
+      tile.dataset.zoom = String(nextZoom);
+      videoElement.style.transformOrigin = `${originX}% ${originY}%`;
+      videoElement.style.transform = `scale(${nextZoom})`;
+      let zoomLabel = tile.querySelector('.screen-zoom-label');
+      if (!zoomLabel) {
+        zoomLabel = document.createElement('span');
+        zoomLabel.className = 'screen-zoom-label';
+        tile.append(zoomLabel);
+      }
+      zoomLabel.textContent = `${Math.round(nextZoom * 100)}%`;
+      zoomLabel.hidden = false;
+      window.clearTimeout(tile.zoomLabelTimeout);
+      tile.zoomLabelTimeout = window.setTimeout(() => { zoomLabel.hidden = true; }, 900);
+    }, { passive: false });
     const label = document.createElement('span');
     label.className = 'screen-tile-label';
     label.textContent = currentRoom?.participants.find((participant) => participant.participantId === participantId)?.displayName || 'Tela compartilhada';
@@ -1069,12 +1708,14 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
   }
   video.muted = muted;
   video.srcObject = stream;
+  video.style.transform = `scale(${Number(tile.dataset.zoom || 1)})`;
   const resumeVideo = () => video.play().catch(() => {});
   const updateScreenAspect = () => {
     const width = video.videoWidth;
     const height = video.videoHeight;
     if (width > 0 && height > 0) {
       elements.screenStage.style.setProperty('--screen-aspect-ratio', `${width} / ${height}`);
+      fitScreenStage();
     }
     resumeVideo();
   };
@@ -1083,6 +1724,7 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
   video.oncanplay = resumeVideo;
   updateScreenAspect();
   elements.screenStage.dataset.active = 'true';
+  window.requestAnimationFrame(fitScreenStage);
   const hasScreenAudio = Boolean(stream.getAudioTracks?.().length);
   if (hasScreenAudio) screenAudioSourceIds.add(participantId);
   else screenAudioSourceIds.delete(participantId);
@@ -1141,10 +1783,13 @@ function selectScreenParticipant(participantId) {
 function updateScreenStageControls() {
   const tiles = [...document.querySelectorAll('[data-screen-tile]')];
   const hasTiles = tiles.length > 0;
+  const hasAvailableScreens = getScreenParticipantIds(currentRoom).length > 0 || sharingScreen;
   if (!hasTiles && document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
   if (!hasTiles) elements.screenStage.style.removeProperty('--screen-aspect-ratio');
   elements.screenStage.dataset.active = String(hasTiles);
-  elements.screenEmptyStage.hidden = hasTiles;
+  window.requestAnimationFrame(fitScreenStage);
+  elements.screenEmptyStage.hidden = hasTiles || hasAvailableScreens;
+  if (elements.screenGallery) elements.screenGallery.hidden = hasTiles || !hasAvailableScreens;
   elements.screenFullscreen.disabled = !hasTiles;
   elements.screenVolume.disabled = screenAudioSourceIds.size === 0;
   elements.screenAudioStatus.textContent = hasTiles
@@ -1176,6 +1821,7 @@ function setScreenViewExpanded(expanded) {
   document.body.classList.toggle('screen-view-expanded', nextExpanded);
   elements.screenStage.dataset.expanded = String(nextExpanded);
   updateFullscreenButton();
+  window.requestAnimationFrame(fitScreenStage);
 }
 
 function toggleScreenFullscreen(participantId = selectedScreenParticipantId) {
@@ -1204,7 +1850,20 @@ function setScreenVolume(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return;
   screenVolumeLevel = Math.min(100, Math.max(0, numericValue)) / 100;
+  if (screenVolumeLevel > 0) previousScreenVolumeLevel = screenVolumeLevel;
   updateScreenVolume();
+}
+
+function toggleScreenVolume() {
+  setScreenVolume(screenVolumeLevel > 0 ? 0 : Math.round((previousScreenVolumeLevel || 1) * 100));
+}
+
+async function closeContextScreen() {
+  if (contextMenuTarget?.kind !== 'screen') return;
+  const participantId = contextMenuTarget.participantId;
+  closeContextMenu();
+  if (participantId === selfId && sharingScreen) await toggleScreen();
+  else if (watchingScreenParticipantId === participantId) await toggleScreenWatching(participantId);
 }
 
 async function toggleScreenWatching(participantId) {
@@ -1373,6 +2032,70 @@ async function refreshNetworkInterfaces({ reveal = false } = {}) {
   return null;
 }
 
+function renderDiscoveredPeers(peers = []) {
+  if (!elements.networkPeerList) return;
+  elements.networkPeerList.replaceChildren();
+  for (const peer of peers) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'network-peer';
+    const address = `${peer.address}:${peer.port || DEFAULT_SIGNALING_PORT}`;
+    const copy = document.createElement('span');
+    const title = document.createElement('strong');
+    const subtitle = document.createElement('small');
+    title.textContent = peer.address;
+    subtitle.textContent = `${peer.provider || 'VPN'} · VoiceRoom disponível`;
+    copy.append(title, subtitle);
+    const action = document.createElement('span');
+    action.textContent = 'Entrar';
+    button.append(copy, action);
+    button.addEventListener('click', () => {
+      elements.hostIp.value = address;
+      if (!elements.name.value.trim()) {
+        elements.name.focus();
+        showNotice('Digite seu nome para entrar nesta sala.', 'warning');
+        return;
+      }
+      createOrJoin('join');
+    });
+    elements.networkPeerList.append(button);
+  }
+}
+
+async function viewOwnScreen() {
+  const previousParticipantId = watchingScreenParticipantId;
+  watchingScreenParticipantId = null;
+  if (previousParticipantId) {
+    removeScreenStream(previousParticipantId);
+    try {
+      await socketClient?.unsubscribeScreen(previousParticipantId);
+    } catch {
+      // A transmissão pode ter terminado enquanto o usuário alternava de tela.
+    }
+  }
+  if (peerManager?.screenStream) renderScreenStream(selfId, peerManager.screenStream, { muted: true });
+}
+
+async function discoverNearbyRooms({ announce = false } = {}) {
+  if (!elements.networkDiscover || !window.voiceRoom?.discoverNetworkPeers) return;
+  elements.networkDiscover.disabled = true;
+  elements.networkDiscoveryStatus.textContent = 'Procurando VoiceRoom nas máquinas já vistas pela VPN…';
+  try {
+    const result = await window.voiceRoom.discoverNetworkPeers();
+    const peers = Array.isArray(result?.peers) ? result.peers : [];
+    renderDiscoveredPeers(peers);
+    elements.networkDiscoveryStatus.textContent = peers.length
+      ? `${peers.length} sala${peers.length === 1 ? '' : 's'} encontrada${peers.length === 1 ? '' : 's'}.`
+      : 'Nenhuma sala VoiceRoom disponível foi encontrada na VPN agora.';
+    if (announce && peers.length) showNotice('Sala VoiceRoom encontrada na sua VPN.', 'success', 5_000);
+  } catch {
+    renderDiscoveredPeers([]);
+    elements.networkDiscoveryStatus.textContent = 'Não foi possível verificar a VPN agora.';
+  } finally {
+    elements.networkDiscover.disabled = false;
+  }
+}
+
 async function resolveHostIp() {
   if (!networkInfo) {
     const preferred = await refreshNetworkInterfaces();
@@ -1414,6 +2137,7 @@ async function createOrJoin(action) {
   elements.join.disabled = true;
   setStatus(action === 'create' ? 'Preparando sala local…' : 'Verificando host…');
   let localServerStartedForAttempt = false;
+  let fallbackPortUsed = false;
   try {
     let result;
     if (action === 'create') {
@@ -1421,7 +2145,8 @@ async function createOrJoin(action) {
       if (!selectedIp) return;
       const serverResult = await window.voiceRoom?.startLocalServer?.({
         ip: selectedIp,
-        port: DEFAULT_SIGNALING_PORT
+        port: DEFAULT_SIGNALING_PORT,
+        allowPortFallback: true
       });
       if (!serverResult?.ok) {
         showNotice(serverResult?.message || 'Não foi possível iniciar a sala local.', 'error');
@@ -1430,13 +2155,15 @@ async function createOrJoin(action) {
       }
       localServerStartedForAttempt = true;
       hostIp = serverResult.data.host;
-      signalingUrl = `http://${hostIp}:${serverResult.data.port}`;
+      hostPort = serverResult.data.port;
+      fallbackPortUsed = serverResult.data.fallbackUsed === true;
+      signalingUrl = `http://${hostIp}:${hostPort}`;
       const target = await window.voiceRoom?.setSignalingTarget?.(signalingUrl);
       if (!target?.ok) throw new Error('O endereço da sala local não é válido.');
       const health = await SocketClient.healthCheck(signalingUrl);
       if (!health?.ok) throw new Error('A sala local não respondeu ao health check.');
       await socketClient.connect(signalingUrl);
-      result = await socketClient.createRoom(displayName, profileAvatar || null);
+      result = await socketClient.createRoom(displayName, profileAvatar || null, profileId);
     } else {
       let parsed;
       try {
@@ -1447,6 +2174,7 @@ async function createOrJoin(action) {
         return;
       }
       hostIp = parsed.host;
+      hostPort = parsed.port;
       signalingUrl = parsed.url;
       const target = await window.voiceRoom?.setSignalingTarget?.(signalingUrl);
       if (!target?.ok) {
@@ -1463,7 +2191,7 @@ async function createOrJoin(action) {
         return;
       }
       await socketClient.connect(signalingUrl);
-      result = await socketClient.joinRoom(displayName, profileAvatar || null);
+      result = await socketClient.joinRoom(displayName, profileAvatar || null, profileId);
     }
     if (!result?.ok) {
       socketClient?.close();
@@ -1476,6 +2204,9 @@ async function createOrJoin(action) {
       return;
     }
     enterRoom(result);
+    if (action === 'create' && fallbackPortUsed) {
+      showNotice(`Sala criada automaticamente em ${hostIp}:${hostPort}.`, 'success', 5_000);
+    }
     await loadMicrophones();
   } catch (error) {
     if (action === 'create' && localServerStartedForAttempt && !roomCode) {
@@ -1495,6 +2226,10 @@ async function createOrJoin(action) {
 }
 
 async function toggleMicrophone() {
+  if (forcedMutedUntil && forcedMutedUntil > Date.now()) {
+    showNotice('Você está mutado temporariamente por votação.', 'warning');
+    return;
+  }
   if (deafened) {
     showNotice('Desative o ensurdecer para ativar o microfone.', 'warning');
     return;
@@ -1564,6 +2299,7 @@ async function toggleScreen() {
     }
     const selection = await chooseScreenSource();
     setScreenQuality(selection.quality);
+    if (screenQuality === 'maximum') warnMaximumScreenQuality();
     const stream = await peerManager.startScreenShare(selection.sourceId, {
       includeSystemAudio: selection.includeSystemAudio,
       quality: selection.quality
@@ -1571,6 +2307,7 @@ async function toggleScreen() {
     sharingScreen = true;
     renderScreenStream(selfId, stream, { muted: true });
     renderRoom(currentRoom);
+    switchChannel('voice');
   } catch (error) {
     if (error.name !== 'AbortError') showNotice(error.message || 'Não foi possível compartilhar a tela.');
   }
@@ -1583,8 +2320,8 @@ async function chooseScreenSource() {
   const sources = await window.voiceRoom.getScreenSources();
   if (!sources.length) throw new Error('Nenhuma janela ou tela disponível para compartilhar.');
   elements.sourceList.replaceChildren();
-  elements.includeScreenAudio.checked = false;
-  elements.screenQuality.value = screenQuality;
+  elements.includeScreenAudio.checked = true;
+  syncScreenQualityRecommendation({ select: true });
   return new Promise((resolve, reject) => {
     const close = () => {
       elements.sourcePicker.hidden = true;
@@ -1595,11 +2332,29 @@ async function chooseScreenSource() {
       reject(new DOMException('Seleção cancelada', 'AbortError'));
     };
     elements.cancelSource.addEventListener('click', onCancel);
-    for (const source of sources) {
+    const groups = [
+      ['Telas', sources.filter((source) => source.id.startsWith('screen:'))],
+      ['Janelas', sources.filter((source) => !source.id.startsWith('screen:'))]
+    ];
+    for (const [groupName, groupSources] of groups) {
+      if (!groupSources.length) continue;
+      const heading = document.createElement('h3');
+      heading.className = 'source-group-title';
+      heading.textContent = groupName;
+      elements.sourceList.append(heading);
+      for (const source of groupSources) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'source-option';
-      button.textContent = source.name;
+      if (source.thumbnail) {
+        const thumbnail = document.createElement('img');
+        thumbnail.src = source.thumbnail;
+        thumbnail.alt = '';
+        button.append(thumbnail);
+      }
+      const sourceName = document.createElement('span');
+      sourceName.textContent = source.name;
+      button.append(sourceName);
       button.addEventListener('click', () => {
         close();
         resolve({
@@ -1609,6 +2364,7 @@ async function chooseScreenSource() {
         });
       }, { once: true });
       elements.sourceList.append(button);
+      }
     }
     elements.sourcePicker.hidden = false;
   });
@@ -1629,11 +2385,18 @@ async function leaveRoom({ notifyServer = true, stopHost = true } = {}) {
   peerManager?.close();
   stopAllSpeakingMonitors();
   stopLatencyMonitoring();
+  window.clearInterval(roomDurationTimer);
+  roomDurationTimer = null;
+  roomStartedAt = null;
+  presenceReady = false;
+  previousParticipants = new Map();
+  chatMessages = [];
   peerManager = null;
   selfId = null;
   roomCode = null;
   roomRole = null;
   hostIp = '';
+  hostPort = DEFAULT_SIGNALING_PORT;
   signalingUrl = null;
   currentRoom = null;
   sharingScreen = false;
@@ -1649,6 +2412,8 @@ async function leaveRoom({ notifyServer = true, stopHost = true } = {}) {
   elements.screenStage.querySelectorAll('[data-participant-audio]').forEach((audio) => audio.remove());
   elements.screenEmptyStage.hidden = false;
   elements.screenStage.dataset.active = 'false';
+  elements.screenStage.style.width = '100%';
+  elements.screenStage.style.height = '100%';
   elements.screenVolume.disabled = true;
   elements.screenFullscreen.disabled = true;
   elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
@@ -1721,7 +2486,7 @@ function releasePtt() {
 }
 
 function getInviteLink() {
-  return hostIp ? `voiceroom://join/${encodeURIComponent(`${hostIp}:${DEFAULT_SIGNALING_PORT}`)}` : '';
+  return hostIp ? `voiceroom://join/${encodeURIComponent(`${hostIp}:${hostPort}`)}` : '';
 }
 
 async function copyInviteLink() {
@@ -1751,6 +2516,14 @@ function handleDeepLink(url) {
 }
 
 function bindEvents() {
+  elements.themeToggle?.addEventListener('click', () => {
+    applyTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
+  });
+  elements.windowMinimize?.addEventListener('click', () => window.voiceRoom?.minimizeWindow?.());
+  elements.windowMaximize?.addEventListener('click', () => window.voiceRoom?.toggleMaximizeWindow?.());
+  elements.windowClose?.addEventListener('click', () => window.voiceRoom?.closeWindow?.());
+  elements.voiceChannel?.addEventListener('click', () => switchChannel('voice'));
+  elements.textChannel?.addEventListener('click', () => switchChannel('text'));
   elements.create.addEventListener('click', () => createOrJoin('create'));
   elements.join.addEventListener('click', () => createOrJoin('join'));
   elements.hostIp?.addEventListener('input', () => {
@@ -1758,8 +2531,8 @@ function bindEvents() {
   });
   elements.copyIp?.addEventListener('click', async () => {
     if (!hostIp) return;
-    await navigator.clipboard.writeText(hostIp);
-    showNotice('IP da sala copiado.', 'success');
+    await navigator.clipboard.writeText(`${hostIp}:${hostPort}`);
+    showNotice('Endereço da sala copiado.', 'success');
   });
   elements.copyInvite.addEventListener('click', copyInviteLink);
   elements.networkConfirm?.addEventListener('click', async () => {
@@ -1773,6 +2546,7 @@ function bindEvents() {
   });
   elements.networkRefresh?.addEventListener('click', () => refreshNetworkInterfaces({ reveal: true }));
   elements.networkOther?.addEventListener('click', () => refreshNetworkInterfaces({ reveal: true }));
+  elements.networkDiscover?.addEventListener('click', () => discoverNearbyRooms({ announce: true }));
   elements.profileBadge?.addEventListener('click', () => elements.profilePhotoInput?.click());
   elements.profilePhotoInput?.addEventListener('change', handleProfilePhotoChange);
   elements.microphone.addEventListener('click', toggleMicrophone);
@@ -1813,10 +2587,13 @@ function bindEvents() {
   elements.screen.addEventListener('click', toggleScreen);
   elements.reconnect.addEventListener('click', reconnectCalls);
   elements.screenVolume.addEventListener('input', () => setScreenVolume(elements.screenVolume.value));
+  elements.screenVolumeToggle?.addEventListener('click', toggleScreenVolume);
   elements.screenQuality.addEventListener('change', async () => {
     setScreenQuality(elements.screenQuality.value);
+    if (screenQuality === 'maximum') warnMaximumScreenQuality();
     try { await peerManager?.setScreenQuality?.(screenQuality); } catch { /* fallback mantém o perfil atual */ }
   });
+  elements.activeIp?.addEventListener('click', () => elements.copyIp?.click());
   elements.screenDiagnosticsToggle?.addEventListener('click', () => {
     const isOpen = elements.screenDiagnostics?.hidden === false;
     setScreenDiagnosticsVisible(!isOpen);
@@ -1827,6 +2604,20 @@ function bindEvents() {
   elements.screenFullscreen.addEventListener('click', () => toggleScreenFullscreen());
   document.addEventListener('fullscreenchange', updateFullscreenButton);
   elements.leave.addEventListener('click', leaveRoom);
+  elements.presenceNotifications?.addEventListener('change', readAudioSettingsFromControls);
+  elements.chatForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const content = elements.chatInput.value.trim();
+    if (!content) return;
+    elements.chatInput.value = '';
+    await sendChat('text', content);
+  });
+  elements.chatImageOpen?.addEventListener('click', () => elements.chatImageInput?.click());
+  elements.chatImageInput?.addEventListener('change', async () => {
+    const file = elements.chatImageInput.files?.[0];
+    elements.chatImageInput.value = '';
+    try { await sendChatImage(file); } catch (error) { showNotice(error.message); }
+  });
   elements.appUpdateInstall?.addEventListener('click', installApplicationUpdate);
   elements.appUpdateCheck?.addEventListener('click', async () => {
     if (appUpdateState.status === 'downloaded') {
@@ -1850,15 +2641,53 @@ function bindEvents() {
   elements.name.addEventListener('input', () => {
     try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, elements.name.value); } catch { /* armazenamento opcional */ }
     renderProfileAvatar();
+    renderLocalProfileNote();
+  });
+  elements.contextMenuVolume?.addEventListener('input', () => setContextTargetVolume(elements.contextMenuVolume.value));
+  elements.contextMenuMute?.addEventListener('click', toggleContextTargetMute);
+  elements.contextMenuCloseStream?.addEventListener('click', () => closeContextScreen().catch(() => {}));
+  elements.contextMenuWatch?.addEventListener('click', () => watchContextTransmission().catch(() => {}));
+  elements.contextVoteMute?.addEventListener('click', () => startContextVote('mute', 30));
+  elements.contextVoteBanTemp?.addEventListener('click', () => startContextVote('ban', Number(elements.contextBanSeconds.value) || 60));
+  elements.contextVoteBanPermanent?.addEventListener('click', () => startContextVote('ban', 0));
+  elements.settingsAudioTab?.addEventListener('click', () => switchSettingsPane('audio'));
+  elements.settingsRoomTab?.addEventListener('click', () => switchSettingsPane('room'));
+  elements.roomChatNameSave?.addEventListener('click', async () => {
+    const response = await socketClient?.updateRoomSettings(elements.roomChatName.value);
+    if (!response?.ok) showNotice(responseError(response));
+    else showNotice('Nome do chat atualizado.', 'success');
+  });
+  elements.roomModeratorSelect?.addEventListener('change', syncModeratorButton);
+  elements.roomModeratorToggle?.addEventListener('click', async () => {
+    const participantId = elements.roomModeratorSelect.value;
+    const allowed = !currentRoom?.moderatorParticipantIds?.includes(participantId);
+    const response = await socketClient?.setRoomModerator(participantId, allowed);
+    if (!response?.ok) showNotice(responseError(response));
+  });
+  elements.roomBansRefresh?.addEventListener('click', loadRoomBans);
+  elements.voteYes?.addEventListener('click', async () => {
+    const response = await socketClient?.castVote(activeVote?.voteId, true);
+    if (!response?.ok) showNotice(responseError(response), 'warning');
+    else elements.voteActions.hidden = true;
+  });
+  elements.voteNo?.addEventListener('click', async () => {
+    const response = await socketClient?.castVote(activeVote?.voteId, false);
+    if (!response?.ok) showNotice(responseError(response), 'warning');
+    else elements.voteActions.hidden = true;
+  });
+  document.addEventListener('click', (event) => {
+    if (!elements.contextMenu?.hidden && !event.target.closest('#context-menu')) closeContextMenu();
   });
   document.addEventListener('keydown', handlePttKeyDown);
   document.addEventListener('keydown', (event) => {
     if (event.code !== 'Escape' || capturingPttKey) return;
-    if (document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
+    if (!elements.contextMenu?.hidden) closeContextMenu();
+    else if (document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
     else closeAudioSettings();
   });
   document.addEventListener('keyup', handlePttKeyUp);
   window.addEventListener('blur', releasePtt);
+  window.addEventListener('resize', fitScreenStage);
   window.voiceRoom?.onDeepLink?.(handleDeepLink);
   window.voiceRoom?.onLocalServerState?.((state) => {
     if (state?.state === 'error') {
@@ -1885,6 +2714,38 @@ function handleSocketEvent(event, payload) {
     renderRoom(payload.room);
     return;
   }
+  if (event === 'chat:message') {
+    if (payload?.message) {
+      chatMessages.push(payload.message);
+      renderChatMessage(payload.message);
+    }
+    return;
+  }
+  if (event === 'vote:state') {
+    renderVote(payload?.vote);
+    return;
+  }
+  if (event === 'moderation:forced-mute') {
+    forcedMutedUntil = Number(payload?.until) || null;
+    if (forcedMutedUntil) {
+      setMicrophoneMuted(true).catch(() => {});
+      showPresenceToast('Você foi mutado por 30 segundos após votação.', 'leave');
+      window.setTimeout(() => {
+        forcedMutedUntil = null;
+        renderVoiceControls();
+      }, Math.max(0, forcedMutedUntil - Date.now()));
+    } else {
+      renderVoiceControls();
+      showPresenceToast('Seu mute temporário terminou.', 'join');
+    }
+    return;
+  }
+  if (event === 'moderation:banned') {
+    const expiry = payload?.ban?.expiresAt;
+    showNotice(expiry ? `Você foi banido até ${new Date(expiry).toLocaleString('pt-BR')}.` : 'Você foi banido permanentemente desta sala.', 'error', 10_000);
+    leaveRoom({ notifyServer: false, stopHost: false });
+    return;
+  }
   if (event === 'room:host-ended') {
     if (!roomCode) return;
     showNotice('O host encerrou a sala.', 'warning');
@@ -1906,12 +2767,16 @@ function handleSocketEvent(event, payload) {
   if (event === 'screen:viewer-joined') {
     if (payload.ownerParticipantId === selfId) {
       peerManager?.setScreenViewer(payload.viewerParticipantId, true).catch((error) => showNotice(error.message));
+      const viewer = currentRoom?.participants.find((participant) => participant.participantId === payload.viewerParticipantId);
+      showPresenceToast(`${viewer?.displayName || 'Alguém'} entrou na sua transmissão.`, 'join');
     }
     return;
   }
   if (event === 'screen:viewer-left') {
     if (payload.ownerParticipantId === selfId) {
       peerManager?.setScreenViewer(payload.viewerParticipantId, false).catch((error) => showNotice(error.message));
+      const viewer = currentRoom?.participants.find((participant) => participant.participantId === payload.viewerParticipantId);
+      showPresenceToast(`${viewer?.displayName || 'Alguém'} saiu da sua transmissão.`, 'leave');
     }
     return;
   }
@@ -1941,6 +2806,10 @@ function handleSocketEvent(event, payload) {
 }
 
 function bootstrap() {
+  let savedTheme = 'light';
+  try { savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'light'; } catch { /* armazenamento opcional */ }
+  applyTheme(savedTheme);
+  profileId = loadProfileId();
   loadLocalPreferences();
   profileAvatar = loadProfileAvatar();
   renderProfileAvatar();
@@ -1948,6 +2817,7 @@ function bootstrap() {
   bindEvents();
   socketClient = new SocketClient({ onEvent: handleSocketEvent });
   setStatus('Pronto para criar ou entrar em uma sala.');
+  window.setTimeout(() => discoverNearbyRooms(), 600);
 }
 
 bootstrap();

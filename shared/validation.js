@@ -4,6 +4,8 @@ const ROOM_CODE_PATTERN = new RegExp(`^[${ROOM_CODE_ALPHABET}]+$`);
 const PROFILE_AVATAR_PATTERN = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 const MAX_PROFILE_AVATAR_LENGTH = 32_000;
 const IPV4_PATTERN = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const PROFILE_ID_PATTERN = /^[a-f0-9-]{16,64}$/i;
+const CHAT_IMAGE_PATTERN = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
 function validationError(code, message) {
   const error = new Error(message);
@@ -33,6 +35,20 @@ function normalizeAvatar(value) {
     throw new Error('Foto de perfil inválida');
   }
   return value;
+}
+
+function normalizeProfileId(value) {
+  if (typeof value !== 'string' || !PROFILE_ID_PATTERN.test(value)) throw new Error('Perfil local inválido');
+  return value;
+}
+
+function normalizeChatMessage(payload) {
+  const kind = payload?.kind === 'image' ? 'image' : 'text';
+  if (typeof payload?.content !== 'string') throw new Error('Mensagem inválida');
+  const content = kind === 'text' ? payload.content.trim() : payload.content;
+  if (kind === 'text' && (!content || content.length > 2_000)) throw new Error('MESSAGE_TOO_LARGE');
+  if (kind === 'image' && (content.length > 520_000 || !CHAT_IMAGE_PATTERN.test(content))) throw new Error('MESSAGE_TOO_LARGE');
+  return { kind, content };
 }
 
 function assertProtocolVersion(value, expectedVersion) {
@@ -109,9 +125,11 @@ module.exports = {
   assertTargetParticipant,
   assertProtocolVersion,
   normalizeAvatar,
+  normalizeChatMessage,
   normalizeDisplayName,
   normalizeHostAddress,
   normalizeIPv4,
   normalizeRoomCode,
+  normalizeProfileId,
   validateIPv4
 };
