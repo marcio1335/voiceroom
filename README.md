@@ -8,7 +8,7 @@ Esta implementação cobre a fundação do modo local via VPN:
 
 - shell Electron com isolamento de contexto, sandbox e preload mínimo;
 - servidor HTTP + Socket.IO embutido no Electron do HOST, com sala efêmera, limite de 5 pessoas e reconexão por token temporário;
-- detecção de interfaces IPv4, seleção de IP VPN e porta fixa `32145`;
+- detecção de interfaces IPv4, seleção de IP VPN e fallback automático entre as portas `32145` e `32155`;
 - identificadores internos sem caracteres ambíguos, não exibidos ao usuário;
 - validação de nomes, IPs, protocolo e payloads de signaling;
 - rate limiting inicial e endpoints `/health`, `/healthz` e `/readyz`;
@@ -56,11 +56,11 @@ npm run dist     # instalador NSIS
 1. Todos instalam e abrem a mesma VPN.
 2. O HOST abre o VoiceRoom e clica em **Criar sala**.
 3. O app identifica interfaces VPN; se houver mais de uma, o HOST escolhe o IP correto.
-4. O HOST copia o IP exibido (a porta padrão é `32145`).
-5. Cada convidado informa seu nome e o IP do HOST, por exemplo `26.42.13.7`.
+4. O HOST copia o endereço exibido. Se `32145` estiver ocupada, o app escolhe outra porta automaticamente.
+5. Cada convidado informa seu nome e o endereço do HOST, por exemplo `26.42.13.7:32146`.
 6. O Windows pode pedir permissão de firewall; permita o VoiceRoom em redes privadas.
 
-Quando outro computador já estiver visível na tabela de vizinhos do Windows e estiver hospedando VoiceRoom, a seção **Salas na sua VPN** permite entrar sem digitar o IP. A busca testa somente a porta padrão dos vizinhos já conhecidos; ela não percorre a faixa inteira da VPN.
+Quando outro computador já estiver visível na tabela de vizinhos do Windows e estiver hospedando VoiceRoom, a seção **Salas na sua VPN** permite entrar sem digitar o endereço. A busca testa as portas `32145` a `32155` somente nos vizinhos já conhecidos; ela não percorre a faixa inteira da VPN.
 
 Nenhum computador precisa executar `npm run server` ou manter um backend público.
 

@@ -280,7 +280,11 @@ app.whenReady().then(() => {
           message: 'O IP selecionado não pertence a uma interface ativa deste computador.'
         };
       }
-      const status = await localServer.startLocalServer({ ip: parsed.host, port: parsed.port });
+      const status = await localServer.startLocalServer({
+        ip: parsed.host,
+        port: parsed.port,
+        allowPortFallback: payload.allowPortFallback === true
+      });
       return { ok: true, data: status };
     } catch (error) {
       return {
@@ -300,9 +304,14 @@ app.whenReady().then(() => {
   ipcMain.handle('desktop-capturer:get-sources', async () => {
     const sources = await desktopCapturer.getSources({
       types: ['screen', 'window'],
-      thumbnailSize: { width: 0, height: 0 }
+      thumbnailSize: { width: 240, height: 135 },
+      fetchWindowIcons: true
     });
-    return sources.map((source) => ({ id: source.id, name: source.name }));
+    return sources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      thumbnail: source.thumbnail?.isEmpty() ? null : source.thumbnail.toDataURL()
+    }));
   });
   ipcMain.handle('desktop-capturer:select-source', (_event, sourceId) => {
     if (typeof sourceId !== 'string' || sourceId.length < 1 || sourceId.length > 200) return false;

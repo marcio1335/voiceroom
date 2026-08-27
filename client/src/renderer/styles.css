@@ -314,3 +314,112 @@ body.screen-view-expanded #screen-fullscreen { position: fixed; z-index: 41; rig
   .app-update { align-items: flex-start; }
   .app-update-copy span { white-space: normal; }
 }
+
+/* OpenDesign wireframe fidelity: fixed viewport shell, 54px topbar, rail + sidebar. */
+.app-shell { width: 100%; height: 100dvh; padding: 0; }
+.app-header { flex-basis: 54px; padding: 0 16px; background: var(--panel); }
+.landing-screen { overflow: hidden; padding: 14px 20px; }
+.landing-card { width: min(400px, calc(100% - 24px)); max-height: 100%; padding: 24px 28px 20px; }
+.room-layout { grid-template-columns: 58px 230px minmax(0, 1fr); gap: 0; padding: 0; overflow: hidden; }
+.room-rail { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 7px; border-right: 1px solid var(--line); padding: 12px 0; background: var(--panel); }
+.rail-mark { display: grid; place-items: center; width: 36px; height: 36px; margin-bottom: 5px; border: 1.5px solid currentColor; border-radius: 10px; font-size: 18px; }
+.rail-button { display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 9px; padding: 0; color: var(--muted); background: transparent; }
+.rail-button.is-active, .rail-button:hover:not(:disabled) { color: inherit; background: var(--panel-soft); transform: none; }
+.rail-spacer { flex: 1; }
+.room-sidebar { border-right: 1px solid var(--line); border-radius: 0; background: var(--panel); box-shadow: none; }
+.call-card { position: relative; padding: 26px; }
+.screen-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain !important; object-position: center center; }
+.screen-tile { isolation: isolate; }
+.screen-tile-label, .screen-zoom-label { z-index: 3; }
+.source-list { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: min(320px, 45vh); }
+.source-option { display: grid; min-width: 0; gap: 7px; padding: 7px; }
+.source-option img { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: 7px; background: #09090b; object-fit: contain; }
+.source-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+
+body[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f7f8;
+  --panel: #ffffff;
+  --panel-raised: #efeff1;
+  --panel-soft: #e4e4e8;
+  --line: #dcdce0;
+  --line-strong: #9d9da6;
+  --muted: #71717a;
+  --muted-strong: #55555c;
+  --accent: #17171a;
+  --accent-ink: #f7f7f8;
+  --success: #2f6b46;
+  --speaking: #287a4b;
+  --warning: #80611d;
+  --danger: #a33b44;
+  background: var(--bg);
+  color: #17171a;
+}
+body[data-theme="light"]::before { background: none; }
+body[data-theme="light"] button { color: #17171a; background: var(--panel-raised); }
+body[data-theme="light"] button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--panel-soft); }
+body[data-theme="light"] button.primary { color: #f7f7f8; background: #17171a; border-color: #17171a; }
+body[data-theme="light"] button.primary:hover:not(:disabled) { color: #fff; background: #2e2e34; border-color: #2e2e34; }
+body[data-theme="light"] button.ghost,
+body[data-theme="light"] .header-icon,
+body[data-theme="light"] .text-button { background: transparent; }
+body[data-theme="light"] input,
+body[data-theme="light"] select,
+body[data-theme="light"] .input-with-icon { color: #17171a; background: #fff; }
+body[data-theme="light"] input::placeholder { color: #9d9da6; }
+body[data-theme="light"] .app-header,
+body[data-theme="light"] .room-rail,
+body[data-theme="light"] .room-sidebar { border-color: #dcdce0; background: #fff; }
+body[data-theme="light"] .brand-mark { border-color: #17171a; background: #fff; }
+body[data-theme="light"] .card { border-color: #dcdce0; background: #fff; box-shadow: 0 10px 30px #00000014, 0 2px 6px #0000000d; }
+body[data-theme="light"] .landing-screen::before { background-image: radial-gradient(#dcdce0 1px, transparent 1px); opacity: .7; }
+body[data-theme="light"] .landing-lines span { background: #d8d8dd; }
+body[data-theme="light"] .landing-avatar { color: #71717a; background: #e4e4e8; }
+body[data-theme="light"] .landing-avatar span { border-color: #fff; color: #fff; background: #17171a; }
+body[data-theme="light"] .input-with-icon,
+body[data-theme="light"] .network-picker,
+body[data-theme="light"] .nearby-rooms,
+body[data-theme="light"] .or-divider::before,
+body[data-theme="light"] .or-divider::after,
+body[data-theme="light"] .sidebar-divider { border-color: #dcdce0; background-color: transparent; }
+body[data-theme="light"] .or-divider::before,
+body[data-theme="light"] .or-divider::after,
+body[data-theme="light"] .sidebar-divider { background: #dcdce0; }
+body[data-theme="light"] .network-picker { background: #f7f7f8; }
+body[data-theme="light"] .network-peer strong,
+body[data-theme="light"] .participant,
+body[data-theme="light"] .participant-identity > span:last-child,
+body[data-theme="light"] .room-code-row strong { color: #17171a; }
+body[data-theme="light"] .participant:hover { background: #efeff1; }
+body[data-theme="light"] .participant[data-speaking="true"] { border-color: #287a4b; background: #e7f4eb; }
+body[data-theme="light"] .participant-state { border-color: #c9c9cf; color: #71717a; background: #e4e4e8; }
+body[data-theme="light"] .voice-control { color: #55555c; background: transparent; }
+body[data-theme="light"] .icon-button { color: #55555c; background: #efeff1; }
+body[data-theme="light"] .call-live { border-color: #dcdce0; color: #55555c; background: #fff; }
+body[data-theme="light"] .screen-share-button { color: #f7f7f8; background: #17171a; border-color: #17171a; }
+body[data-theme="light"] .screen-share-button .button-icon { color: #d8d8dd; }
+body[data-theme="light"] .screen-fullscreen-button { color: #55555c; background: #fff; border-color: #dcdce0; }
+body[data-theme="light"] .modal-card { border-color: #dcdce0; color: #17171a; background: #fff; box-shadow: 0 12px 32px #00000026; }
+body[data-theme="light"] .settings-tabs,
+body[data-theme="light"] .settings-section { border-color: #dcdce0; background: #f7f7f8; }
+body[data-theme="light"] .settings-tab.is-active { color: #17171a; background: #fff; }
+body[data-theme="light"] .audio-option { color: #17171a; }
+body[data-theme="light"] .source-option { background: #fff; }
+
+@media (max-height: 760px) {
+  .landing-screen { padding: 8px 16px; }
+  .landing-card { padding: 14px 24px 12px; }
+  .landing-emblem { margin-bottom: 6px; }
+  .landing-lines { display: none; }
+  .landing-avatar { width: 38px; height: 38px; margin-bottom: 8px; font-size: 16px; }
+  .landing-card h1 { margin-bottom: 4px; font-size: 17px; }
+  .landing-card > p { margin-bottom: 10px; }
+  .input-with-icon { margin-bottom: 6px; }
+  .profile-local-note { margin-bottom: 6px; }
+  .or-divider { margin: 8px 0; }
+  .nearby-rooms { margin-top: 8px; padding-top: 7px; }
+  .landing-trust { margin-top: 9px; }
+  .call-card { padding: 16px; }
+  .call-heading { margin-bottom: 8px; }
+  .call-controls { margin-top: 7px; gap: 5px; }
+}

@@ -19,7 +19,7 @@
         </div>
 
         <div class="header-tools">
-          <button class="header-icon" type="button" aria-label="Tema atual">☼</button>
+          <button id="theme-toggle" class="header-icon" type="button" aria-label="Alternar tema" title="Alternar tema">☾</button>
           <span id="status" class="status" data-type="info">Pronto para criar ou entrar em uma sala.</span>
           <span id="latency" class="latency" aria-live="polite">Latência: —</span>
           <button id="profile-badge" class="profile-badge" type="button" aria-label="Alterar foto de perfil" title="Clique para escolher uma foto de perfil">V</button>
@@ -87,15 +87,22 @@
       </section>
 
       <section id="room" class="room-layout" hidden>
-        <aside class="room-sidebar card">
+        <nav class="room-rail" aria-label="Navegação da sala">
+          <span class="rail-mark" aria-hidden="true">⌁</span>
+          <button class="rail-button is-active" type="button" aria-label="Sala">⌂</button>
+          <button id="rail-screen" class="rail-button" type="button" aria-label="Transmissões">▣</button>
+          <span class="rail-spacer"></span>
+          <button id="rail-settings" class="rail-button" type="button" aria-label="Configurações">☷</button>
+        </nav>
+        <aside class="room-sidebar">
           <div class="room-sidebar-top">
             <div class="room-code-row">
               <div>
-                <span class="muted small">IP da sala</span>
+                <span class="muted small">Endereço da sala</span>
                 <strong id="active-room-ip">—</strong>
               </div>
               <div class="room-code-actions">
-                <button id="copy-room-ip" class="icon-button" title="Copiar IP" aria-label="Copiar IP">⧉</button>
+                <button id="copy-room-ip" class="icon-button" title="Copiar endereço" aria-label="Copiar endereço">⧉</button>
                 <button id="copy-invite-link" class="icon-button" title="Copiar convite" aria-label="Copiar convite">↗</button>
               </div>
             </div>

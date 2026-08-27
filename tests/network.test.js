@@ -84,3 +84,24 @@ Interface: 192.168.0.10 --- 0x7
     protocolVersion: 1
   }]);
 });
+
+test('descobre sala criada em porta automática de fallback', async () => {
+  const interfaces = getNetworkInterfaces({
+    'Radmin VPN': [{ address: '26.42.13.7', family: 'IPv4', internal: false }]
+  });
+  const attemptedPorts = [];
+  const peers = await discoverVpnPeers({
+    interfaces,
+    arpOutput: `
+Interface: 26.42.13.7 --- 0x12
+  26.42.13.8            aa-bb-cc-dd-ee-01     dynamic
+`,
+    probe: async (address, { port }) => {
+      attemptedPorts.push(port);
+      return port === 32147 ? { address, port, protocolVersion: 1 } : null;
+    }
+  });
+
+  assert.deepEqual(attemptedPorts, [32145, 32146, 32147]);
+  assert.equal(peers[0].port, 32147);
+});

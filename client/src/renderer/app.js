@@ -68,6 +68,9 @@ const elements = {
   status: document.querySelector('#status'),
   latency: document.querySelector('#latency'),
   notice: document.querySelector('#notice'),
+  themeToggle: document.querySelector('#theme-toggle'),
+  railScreen: document.querySelector('#rail-screen'),
+  railSettings: document.querySelector('#rail-settings'),
   appUpdate: document.querySelector('#app-update'),
   appUpdateTitle: document.querySelector('#app-update-title'),
   appUpdateMessage: document.querySelector('#app-update-message'),
@@ -93,6 +96,7 @@ let peerManager;
 let selfId;
 let roomCode;
 let hostIp = '';
+let hostPort = DEFAULT_SIGNALING_PORT;
 let roomRole = null;
 let signalingUrl = null;
 let networkInfo = null;
@@ -127,6 +131,7 @@ const PARTICIPANT_VOLUME_STORAGE_KEY = 'voiceroom.participantVolumes';
 const DISPLAY_NAME_STORAGE_KEY = 'voiceroom.displayName';
 const SCREEN_QUALITY_STORAGE_KEY = 'voiceroom.screenQuality';
 const PROFILE_AVATAR_STORAGE_KEY = 'voiceroom.profileAvatar';
+const THEME_STORAGE_KEY = 'voiceroom.theme';
 const MAX_PROFILE_AVATAR_LENGTH = 32_000;
 
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
@@ -387,6 +392,16 @@ function loadLocalPreferences() {
   } catch { /* armazenamento opcional */ }
   setScreenQuality(screenQuality);
   renderLocalProfileNote();
+}
+
+function applyTheme(value) {
+  const theme = value === 'dark' ? 'dark' : 'light';
+  document.body.dataset.theme = theme;
+  if (elements.themeToggle) {
+    elements.themeToggle.textContent = theme === 'dark' ? '☼' : '☾';
+    elements.themeToggle.title = theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro';
+  }
+  try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* armazenamento opcional */ }
 }
 
 function closeContextMenu() {
@@ -952,7 +967,7 @@ function renderVoiceControls() {
 
 function renderRoom(room) {
   currentRoom = room;
-  if (elements.activeIp) elements.activeIp.textContent = hostIp || '—';
+  if (elements.activeIp) elements.activeIp.textContent = hostIp ? `${hostIp}:${hostPort}` : '—';
   const screenParticipantIds = getScreenParticipantIds(room);
   elements.screen.disabled = !sharingScreen && screenParticipantIds.length >= 2;
   if (elements.screenShareLabel) {
@@ -1600,6 +1615,7 @@ async function createOrJoin(action) {
   elements.join.disabled = true;
   setStatus(action === 'create' ? 'Preparando sala local…' : 'Verificando host…');
   let localServerStartedForAttempt = false;
+  let fallbackPortUsed = false;
   try {
     let result;
     if (action === 'create') {
@@ -1607,7 +1623,8 @@ async function createOrJoin(action) {
       if (!selectedIp) return;
       const serverResult = await window.voiceRoom?.startLocalServer?.({
         ip: selectedIp,
-        port: DEFAULT_SIGNALING_PORT
+        port: DEFAULT_SIGNALING_PORT,
+        allowPortFallback: true
       });
       if (!serverResult?.ok) {
         showNotice(serverResult?.message || 'Não foi possível iniciar a sala local.', 'error');
@@ -1616,7 +1633,9 @@ async function createOrJoin(action) {
       }
       localServerStartedForAttempt = true;
       hostIp = serverResult.data.host;
-      signalingUrl = `http://${hostIp}:${serverResult.data.port}`;
+      hostPort = serverResult.data.port;
+      fallbackPortUsed = serverResult.data.fallbackUsed === true;
+      signalingUrl = `http://${hostIp}:${hostPort}`;
       const target = await window.voiceRoom?.setSignalingTarget?.(signalingUrl);
       if (!target?.ok) throw new Error('O endereço da sala local não é válido.');
       const health = await SocketClient.healthCheck(signalingUrl);
@@ -1633,6 +1652,7 @@ async function createOrJoin(action) {
         return;
       }
       hostIp = parsed.host;
+      hostPort = parsed.port;
       signalingUrl = parsed.url;
       const target = await window.voiceRoom?.setSignalingTarget?.(signalingUrl);
       if (!target?.ok) {
@@ -1662,6 +1682,9 @@ async function createOrJoin(action) {
       return;
     }
     enterRoom(result);
+    if (action === 'create' && fallbackPortUsed) {
+      showNotice(`Sala criada automaticamente em ${hostIp}:${hostPort}.`, 'success', 5_000);
+    }
     await loadMicrophones();
   } catch (error) {
     if (action === 'create' && localServerStartedForAttempt && !roomCode) {
@@ -1786,7 +1809,15 @@ async function chooseScreenSource() {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'source-option';
-      button.textContent = source.name;
+      if (source.thumbnail) {
+        const thumbnail = document.createElement('img');
+        thumbnail.src = source.thumbnail;
+        thumbnail.alt = '';
+        button.append(thumbnail);
+      }
+      const sourceName = document.createElement('span');
+      sourceName.textContent = source.name;
+      button.append(sourceName);
       button.addEventListener('click', () => {
         close();
         resolve({
@@ -1821,6 +1852,7 @@ async function leaveRoom({ notifyServer = true, stopHost = true } = {}) {
   roomCode = null;
   roomRole = null;
   hostIp = '';
+  hostPort = DEFAULT_SIGNALING_PORT;
   signalingUrl = null;
   currentRoom = null;
   sharingScreen = false;
@@ -1908,7 +1940,7 @@ function releasePtt() {
 }
 
 function getInviteLink() {
-  return hostIp ? `voiceroom://join/${encodeURIComponent(`${hostIp}:${DEFAULT_SIGNALING_PORT}`)}` : '';
+  return hostIp ? `voiceroom://join/${encodeURIComponent(`${hostIp}:${hostPort}`)}` : '';
 }
 
 async function copyInviteLink() {
@@ -1938,6 +1970,11 @@ function handleDeepLink(url) {
 }
 
 function bindEvents() {
+  elements.themeToggle?.addEventListener('click', () => {
+    applyTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
+  });
+  elements.railScreen?.addEventListener('click', () => elements.screen?.click());
+  elements.railSettings?.addEventListener('click', openAudioSettings);
   elements.create.addEventListener('click', () => createOrJoin('create'));
   elements.join.addEventListener('click', () => createOrJoin('join'));
   elements.hostIp?.addEventListener('input', () => {
@@ -1945,8 +1982,8 @@ function bindEvents() {
   });
   elements.copyIp?.addEventListener('click', async () => {
     if (!hostIp) return;
-    await navigator.clipboard.writeText(hostIp);
-    showNotice('IP da sala copiado.', 'success');
+    await navigator.clipboard.writeText(`${hostIp}:${hostPort}`);
+    showNotice('Endereço da sala copiado.', 'success');
   });
   elements.copyInvite.addEventListener('click', copyInviteLink);
   elements.networkConfirm?.addEventListener('click', async () => {
@@ -2138,6 +2175,9 @@ function handleSocketEvent(event, payload) {
 }
 
 function bootstrap() {
+  let savedTheme = 'light';
+  try { savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'light'; } catch { /* armazenamento opcional */ }
+  applyTheme(savedTheme);
   loadLocalPreferences();
   profileAvatar = loadProfileAvatar();
   renderProfileAvatar();

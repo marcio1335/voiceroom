@@ -3,9 +3,14 @@ const http = require('node:http');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { normalizeHostAddress, normalizeIPv4, validateIPv4 } = require('../../../shared/validation');
+const { DEFAULT_SIGNALING_PORT, SIGNALING_PORT_FALLBACK_ATTEMPTS } = require('../../../shared/config');
 
 const execFileAsync = promisify(execFile);
-const DISCOVERY_PORT = 32145;
+const DISCOVERY_PORT = DEFAULT_SIGNALING_PORT;
+const DISCOVERY_PORTS = Object.freeze(Array.from(
+  { length: SIGNALING_PORT_FALLBACK_ATTEMPTS },
+  (_, index) => DISCOVERY_PORT + index
+));
 const MAX_DISCOVERY_NEIGHBORS = 64;
 
 const VPN_INTERFACE_PATTERNS = Object.freeze([
@@ -156,7 +161,11 @@ async function discoverVpnPeers({
     .filter((entry) => byLocalAddress.has(entry.localAddress))
     .slice(0, MAX_DISCOVERY_NEIGHBORS);
   const results = await Promise.all(neighbors.map(async (neighbor) => {
-    const room = await probe(neighbor.address, { port: DISCOVERY_PORT });
+    let room = null;
+    for (const port of DISCOVERY_PORTS) {
+      room = await probe(neighbor.address, { port });
+      if (room) break;
+    }
     if (!room) return null;
     const network = byLocalAddress.get(neighbor.localAddress);
     return {
