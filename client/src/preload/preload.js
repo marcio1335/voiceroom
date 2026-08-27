@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('voiceRoom', Object.freeze({
   getScreenSources: () => ipcRenderer.invoke('desktop-capturer:get-sources'),
   selectScreenSource: (sourceId) => ipcRenderer.invoke('desktop-capturer:select-source', sourceId),
   getNetworkInterfaces: () => ipcRenderer.invoke('network:get-interfaces'),
+  discoverNetworkPeers: () => ipcRenderer.invoke('network:discover-peers'),
   setSignalingTarget: (url) => ipcRenderer.invoke('signaling:set-target', url),
   clearSignalingTargets: () => ipcRenderer.invoke('signaling:clear-targets'),
   getLocalServerStatus: () => ipcRenderer.invoke('local-server:get-status'),

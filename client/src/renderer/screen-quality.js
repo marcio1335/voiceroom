@@ -42,6 +42,17 @@ const SCREEN_PROFILES = Object.freeze({
     maxBitrate: 5_000_000,
     contentHint: 'motion',
     degradationPreference: 'maintain-framerate'
+  }),
+  maximum: Object.freeze({
+    id: 'maximum',
+    label: 'Máximo',
+    description: '1080p · 60 fps · uso muito alto de banda e CPU',
+    width: 1920,
+    height: 1080,
+    frameRate: 60,
+    maxBitrate: 10_000_000,
+    contentHint: 'motion',
+    degradationPreference: 'maintain-framerate'
   })
 });
 
@@ -49,14 +60,16 @@ const SCREEN_PROFILE_ALIASES = Object.freeze({
   '480p': 'economic',
   '720p': 'balanced',
   '1080p': 'sharp',
-  '720p60': 'fluid'
+  '720p60': 'fluid',
+  '1080p60': 'maximum'
 });
 
 const SCREEN_PROFILE_LADDERS = Object.freeze({
   economic: Object.freeze(['economic']),
   balanced: Object.freeze(['balanced', 'economic']),
   sharp: Object.freeze(['sharp', 'balanced', 'economic']),
-  fluid: Object.freeze(['fluid', 'balanced', 'economic'])
+  fluid: Object.freeze(['fluid', 'balanced', 'economic']),
+  maximum: Object.freeze(['maximum', 'fluid', 'balanced', 'economic'])
 });
 
 const DEFAULT_SCREEN_PROFILE = 'balanced';

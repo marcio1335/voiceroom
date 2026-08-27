@@ -20,6 +20,7 @@ test('normaliza perfis novos e preferências antigas', () => {
   assert.equal(normalizeScreenProfile('720p'), 'balanced');
   assert.equal(normalizeScreenProfile('1080p'), 'sharp');
   assert.equal(normalizeScreenProfile('720p60'), 'fluid');
+  assert.equal(normalizeScreenProfile('1080p60'), 'maximum');
   assert.equal(normalizeScreenProfile('desconhecido'), 'balanced');
   assert.equal(getScreenProfile('sharp').maxBitrate, 5_000_000);
 });
@@ -91,5 +92,11 @@ test('ordena VP9 e VP8 sem remover codecs auxiliares', () => {
   assert.equal(ordered[0].mimeType, 'video/vp9');
   assert.equal(ordered[1].mimeType, 'video/vp8');
   assert.equal(ordered.length, codecs.length);
-  assert.deepEqual(Object.keys(SCREEN_PROFILES).sort(), ['balanced', 'economic', 'fluid', 'sharp']);
+  assert.deepEqual(Object.keys(SCREEN_PROFILES).sort(), ['balanced', 'economic', 'fluid', 'maximum', 'sharp']);
+});
+
+test('1080p60 usa teto alto e degrada para 720p60', () => {
+  assert.equal(getScreenProfile('maximum').frameRate, 60);
+  assert.equal(getScreenProfile('maximum').maxBitrate, 10_000_000);
+  assert.equal(getLowerScreenProfile('maximum', 'maximum'), 'fluid');
 });

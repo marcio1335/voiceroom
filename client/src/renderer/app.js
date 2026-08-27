@@ -20,6 +20,9 @@ const elements = {
   networkRefresh: document.querySelector('#network-refresh'),
   networkOther: document.querySelector('#network-other'),
   networkStatus: document.querySelector('#network-status'),
+  networkDiscover: document.querySelector('#network-discover'),
+  networkDiscoveryStatus: document.querySelector('#network-discovery-status'),
+  networkPeerList: document.querySelector('#network-peer-list'),
   participants: document.querySelector('#participants'),
   microphone: document.querySelector('#microphone'),
   voiceMicrophone: document.querySelector('#voice-microphone'),
@@ -75,7 +78,14 @@ const elements = {
   appVersionLabel: document.querySelector('#app-version-label'),
   profileBadge: document.querySelector('#profile-badge'),
   profilePhotoInput: document.querySelector('#profile-photo-input'),
-  landingAvatar: document.querySelector('#landing-avatar')
+  landingAvatar: document.querySelector('#landing-avatar'),
+  profileLocalNote: document.querySelector('#profile-local-note'),
+  contextMenu: document.querySelector('#context-menu'),
+  contextMenuTitle: document.querySelector('#context-menu-title'),
+  contextMenuMute: document.querySelector('#context-menu-mute'),
+  contextMenuVolume: document.querySelector('#context-menu-volume'),
+  contextMenuVolumeValue: document.querySelector('#context-menu-volume-value'),
+  contextMenuCloseStream: document.querySelector('#context-menu-close-stream')
 };
 
 let socketClient;
@@ -110,6 +120,9 @@ const screenQualityWarnings = new Set();
 const speakingParticipants = new Set();
 const speakingMonitors = new Map();
 let speakingAudioContext = null;
+let contextMenuTarget = null;
+let lastMaximumScreenWarningAt = -Infinity;
+const participantVolumeBeforeMute = new Map();
 const PARTICIPANT_VOLUME_STORAGE_KEY = 'voiceroom.participantVolumes';
 const DISPLAY_NAME_STORAGE_KEY = 'voiceroom.displayName';
 const SCREEN_QUALITY_STORAGE_KEY = 'voiceroom.screenQuality';
@@ -373,6 +386,79 @@ function loadLocalPreferences() {
     if (savedQuality) screenQuality = normalizeScreenProfile(savedQuality);
   } catch { /* armazenamento opcional */ }
   setScreenQuality(screenQuality);
+  renderLocalProfileNote();
+}
+
+function closeContextMenu() {
+  contextMenuTarget = null;
+  if (elements.contextMenu) elements.contextMenu.hidden = true;
+}
+
+function positionContextMenu(x, y) {
+  const menu = elements.contextMenu;
+  if (!menu) return;
+  menu.hidden = false;
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8))}px`;
+}
+
+function syncContextMenu() {
+  if (!contextMenuTarget || !elements.contextMenu) return;
+  const { kind, participantId } = contextMenuTarget;
+  const participant = currentRoom?.participants.find((entry) => entry.participantId === participantId);
+  const isScreen = kind === 'screen';
+  const value = isScreen ? screenVolumeLevel : getParticipantVolume(participantId);
+  elements.contextMenuTitle.textContent = isScreen
+    ? `Transmissão de ${participant?.displayName || 'participante'}`
+    : participant?.displayName || 'Participante';
+  elements.contextMenuVolume.value = String(Math.round(value * 100));
+  elements.contextMenuVolumeValue.textContent = `${Math.round(value * 100)}%`;
+  elements.contextMenuMute.textContent = value === 0 ? 'Voltar a ouvir' : 'Silenciar para mim';
+  elements.contextMenuCloseStream.hidden = !isScreen;
+}
+
+function openContextMenu(kind, participantId, x, y) {
+  if (!participantId || (kind === 'participant' && participantId === selfId)) return;
+  contextMenuTarget = { kind, participantId };
+  syncContextMenu();
+  positionContextMenu(x, y);
+}
+
+function setContextTargetVolume(percentage) {
+  if (!contextMenuTarget) return;
+  const normalized = Math.min(100, Math.max(0, Number(percentage))) / 100;
+  if (contextMenuTarget.kind === 'screen') setScreenVolume(normalized * 100);
+  else setParticipantVolume(contextMenuTarget.participantId, normalized);
+  syncContextMenu();
+}
+
+function toggleContextTargetMute() {
+  if (!contextMenuTarget) return;
+  if (contextMenuTarget.kind === 'screen') {
+    if (screenVolumeLevel > 0) {
+      elements.contextMenuMute.dataset.restoreVolume = String(screenVolumeLevel);
+      setScreenVolume(0);
+    } else {
+      setScreenVolume(Number(elements.contextMenuMute.dataset.restoreVolume || 0.75) * 100);
+    }
+  } else {
+    const participantId = contextMenuTarget.participantId;
+    const current = getParticipantVolume(participantId);
+    if (current > 0) {
+      participantVolumeBeforeMute.set(participantId, current);
+      setParticipantVolume(participantId, 0);
+    } else {
+      setParticipantVolume(participantId, participantVolumeBeforeMute.get(participantId) || 0.75);
+    }
+  }
+  syncContextMenu();
+}
+
+function renderLocalProfileNote() {
+  if (!elements.profileLocalNote) return;
+  elements.profileLocalNote.textContent = elements.name.value.trim()
+    ? 'Perfil local salvo neste computador. Você não precisará digitar o nome de novo.'
+    : 'Seu perfil ficará salvo somente neste computador.';
 }
 
 function renderAudioProcessingStatus(settings = {}) {
@@ -545,12 +631,23 @@ async function reconnectCalls() {
   }
 }
 
-function showNotice(message, type = 'error') {
+function showNotice(message, type = 'error', duration = 6_000) {
   elements.notice.textContent = message;
   elements.notice.dataset.type = type;
   elements.notice.hidden = false;
   window.clearTimeout(showNotice.timeout);
-  showNotice.timeout = window.setTimeout(() => { elements.notice.hidden = true; }, 6_000);
+  showNotice.timeout = window.setTimeout(() => { elements.notice.hidden = true; }, duration);
+}
+
+function warnMaximumScreenQuality() {
+  const now = Date.now();
+  if (now - lastMaximumScreenWarningAt < 4_500) return;
+  lastMaximumScreenWarningAt = now;
+  showNotice(
+    '1080p a 60 fps é um modo muito pesado. Pode aumentar o uso de CPU e afetar a qualidade da sua conexão.',
+    'warning',
+    5_000
+  );
 }
 
 function formatUpdateBytes(value) {
@@ -691,8 +788,17 @@ function renderParticipants() {
     if (participant.role === 'host') labels.push('Host');
     if (participant.participantId === selfId) labels.push('você');
     nameElement.textContent = participant.displayName + (labels.length ? ` (${labels.join(', ')})` : '');
-    const identity = document.createElement('span');
+    const identity = document.createElement(participant.participantId === selfId ? 'span' : 'button');
     identity.className = 'participant-identity';
+    if (identity instanceof HTMLButtonElement) {
+      identity.type = 'button';
+      identity.title = `Ajustar volume de ${participant.displayName}`;
+      identity.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const rect = identity.getBoundingClientRect();
+        openContextMenu('participant', participant.participantId, rect.left, rect.bottom + 6);
+      });
+    }
     identity.append(stateElement, nameElement);
     const statusElement = document.createElement('span');
     statusElement.className = 'participant-status';
@@ -700,17 +806,10 @@ function renderParticipants() {
     statusElement.textContent = state;
     item.append(identity, statusElement);
     if (participant.participantId !== selfId && participant.connected) {
-      const volume = document.createElement('input');
-      volume.type = 'range';
-      volume.min = '0';
-      volume.max = '100';
-      volume.step = '1';
-      volume.value = String(Math.round(getParticipantVolume(participant.participantId) * 100));
-      volume.className = 'participant-volume';
-      volume.title = `Volume de ${participant.displayName}`;
-      volume.setAttribute('aria-label', `Volume de ${participant.displayName}`);
-      volume.addEventListener('input', () => setParticipantVolume(participant.participantId, Number(volume.value) / 100));
-      item.append(volume);
+      item.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        openContextMenu('participant', participant.participantId, event.clientX, event.clientY);
+      });
     }
     elements.participants.append(item);
   }
@@ -1053,6 +1152,34 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
     tile.className = 'screen-tile';
     tile.dataset.screenTile = participantId;
     tile.addEventListener('click', () => selectScreenParticipant(participantId));
+    tile.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      selectScreenParticipant(participantId);
+      openContextMenu('screen', participantId, event.clientX, event.clientY);
+    });
+    tile.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      const currentZoom = Number(tile.dataset.zoom || 1);
+      const nextZoom = Math.min(3, Math.max(1, currentZoom + (event.deltaY < 0 ? 0.15 : -0.15)));
+      const videoElement = tile.querySelector('[data-participant-video]');
+      if (!videoElement) return;
+      const rect = tile.getBoundingClientRect();
+      const originX = Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100));
+      const originY = Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100));
+      tile.dataset.zoom = String(nextZoom);
+      videoElement.style.transformOrigin = `${originX}% ${originY}%`;
+      videoElement.style.transform = `scale(${nextZoom})`;
+      let zoomLabel = tile.querySelector('.screen-zoom-label');
+      if (!zoomLabel) {
+        zoomLabel = document.createElement('span');
+        zoomLabel.className = 'screen-zoom-label';
+        tile.append(zoomLabel);
+      }
+      zoomLabel.textContent = `${Math.round(nextZoom * 100)}%`;
+      zoomLabel.hidden = false;
+      window.clearTimeout(tile.zoomLabelTimeout);
+      tile.zoomLabelTimeout = window.setTimeout(() => { zoomLabel.hidden = true; }, 900);
+    }, { passive: false });
     const label = document.createElement('span');
     label.className = 'screen-tile-label';
     label.textContent = currentRoom?.participants.find((participant) => participant.participantId === participantId)?.displayName || 'Tela compartilhada';
@@ -1069,6 +1196,7 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
   }
   video.muted = muted;
   video.srcObject = stream;
+  video.style.transform = `scale(${Number(tile.dataset.zoom || 1)})`;
   const resumeVideo = () => video.play().catch(() => {});
   const updateScreenAspect = () => {
     const width = video.videoWidth;
@@ -1205,6 +1333,14 @@ function setScreenVolume(value) {
   if (!Number.isFinite(numericValue)) return;
   screenVolumeLevel = Math.min(100, Math.max(0, numericValue)) / 100;
   updateScreenVolume();
+}
+
+async function closeContextScreen() {
+  if (contextMenuTarget?.kind !== 'screen') return;
+  const participantId = contextMenuTarget.participantId;
+  closeContextMenu();
+  if (participantId === selfId && sharingScreen) await toggleScreen();
+  else if (watchingScreenParticipantId === participantId) await toggleScreenWatching(participantId);
 }
 
 async function toggleScreenWatching(participantId) {
@@ -1371,6 +1507,56 @@ async function refreshNetworkInterfaces({ reveal = false } = {}) {
   if (elements.networkPicker) elements.networkPicker.hidden = false;
   if (elements.networkOther) elements.networkOther.hidden = true;
   return null;
+}
+
+function renderDiscoveredPeers(peers = []) {
+  if (!elements.networkPeerList) return;
+  elements.networkPeerList.replaceChildren();
+  for (const peer of peers) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'network-peer';
+    const address = `${peer.address}:${peer.port || DEFAULT_SIGNALING_PORT}`;
+    const copy = document.createElement('span');
+    const title = document.createElement('strong');
+    const subtitle = document.createElement('small');
+    title.textContent = peer.address;
+    subtitle.textContent = `${peer.provider || 'VPN'} · VoiceRoom disponível`;
+    copy.append(title, subtitle);
+    const action = document.createElement('span');
+    action.textContent = 'Entrar';
+    button.append(copy, action);
+    button.addEventListener('click', () => {
+      elements.hostIp.value = address;
+      if (!elements.name.value.trim()) {
+        elements.name.focus();
+        showNotice('Digite seu nome para entrar nesta sala.', 'warning');
+        return;
+      }
+      createOrJoin('join');
+    });
+    elements.networkPeerList.append(button);
+  }
+}
+
+async function discoverNearbyRooms({ announce = false } = {}) {
+  if (!elements.networkDiscover || !window.voiceRoom?.discoverNetworkPeers) return;
+  elements.networkDiscover.disabled = true;
+  elements.networkDiscoveryStatus.textContent = 'Procurando VoiceRoom nas máquinas já vistas pela VPN…';
+  try {
+    const result = await window.voiceRoom.discoverNetworkPeers();
+    const peers = Array.isArray(result?.peers) ? result.peers : [];
+    renderDiscoveredPeers(peers);
+    elements.networkDiscoveryStatus.textContent = peers.length
+      ? `${peers.length} sala${peers.length === 1 ? '' : 's'} encontrada${peers.length === 1 ? '' : 's'}.`
+      : 'Nenhuma sala VoiceRoom disponível foi encontrada na VPN agora.';
+    if (announce && peers.length) showNotice('Sala VoiceRoom encontrada na sua VPN.', 'success', 5_000);
+  } catch {
+    renderDiscoveredPeers([]);
+    elements.networkDiscoveryStatus.textContent = 'Não foi possível verificar a VPN agora.';
+  } finally {
+    elements.networkDiscover.disabled = false;
+  }
 }
 
 async function resolveHostIp() {
@@ -1564,6 +1750,7 @@ async function toggleScreen() {
     }
     const selection = await chooseScreenSource();
     setScreenQuality(selection.quality);
+    if (screenQuality === 'maximum') warnMaximumScreenQuality();
     const stream = await peerManager.startScreenShare(selection.sourceId, {
       includeSystemAudio: selection.includeSystemAudio,
       quality: selection.quality
@@ -1773,6 +1960,7 @@ function bindEvents() {
   });
   elements.networkRefresh?.addEventListener('click', () => refreshNetworkInterfaces({ reveal: true }));
   elements.networkOther?.addEventListener('click', () => refreshNetworkInterfaces({ reveal: true }));
+  elements.networkDiscover?.addEventListener('click', () => discoverNearbyRooms({ announce: true }));
   elements.profileBadge?.addEventListener('click', () => elements.profilePhotoInput?.click());
   elements.profilePhotoInput?.addEventListener('change', handleProfilePhotoChange);
   elements.microphone.addEventListener('click', toggleMicrophone);
@@ -1815,6 +2003,7 @@ function bindEvents() {
   elements.screenVolume.addEventListener('input', () => setScreenVolume(elements.screenVolume.value));
   elements.screenQuality.addEventListener('change', async () => {
     setScreenQuality(elements.screenQuality.value);
+    if (screenQuality === 'maximum') warnMaximumScreenQuality();
     try { await peerManager?.setScreenQuality?.(screenQuality); } catch { /* fallback mantém o perfil atual */ }
   });
   elements.screenDiagnosticsToggle?.addEventListener('click', () => {
@@ -1850,11 +2039,19 @@ function bindEvents() {
   elements.name.addEventListener('input', () => {
     try { localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, elements.name.value); } catch { /* armazenamento opcional */ }
     renderProfileAvatar();
+    renderLocalProfileNote();
+  });
+  elements.contextMenuVolume?.addEventListener('input', () => setContextTargetVolume(elements.contextMenuVolume.value));
+  elements.contextMenuMute?.addEventListener('click', toggleContextTargetMute);
+  elements.contextMenuCloseStream?.addEventListener('click', () => closeContextScreen().catch(() => {}));
+  document.addEventListener('click', (event) => {
+    if (!elements.contextMenu?.hidden && !event.target.closest('#context-menu')) closeContextMenu();
   });
   document.addEventListener('keydown', handlePttKeyDown);
   document.addEventListener('keydown', (event) => {
     if (event.code !== 'Escape' || capturingPttKey) return;
-    if (document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
+    if (!elements.contextMenu?.hidden) closeContextMenu();
+    else if (document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
     else closeAudioSettings();
   });
   document.addEventListener('keyup', handlePttKeyUp);
@@ -1948,6 +2145,7 @@ function bootstrap() {
   bindEvents();
   socketClient = new SocketClient({ onEvent: handleSocketEvent });
   setStatus('Pronto para criar ou entrar em uma sala.');
+  window.setTimeout(() => discoverNearbyRooms(), 600);
 }
 
 bootstrap();

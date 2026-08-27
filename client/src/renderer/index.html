@@ -52,6 +52,7 @@
             <span aria-hidden="true">♙</span>
             <input id="display-name" maxlength="30" autocomplete="off" placeholder="Seu nome" />
           </div>
+          <span id="profile-local-note" class="profile-local-note muted">Seu perfil ficará salvo somente neste computador.</span>
           <button id="create-room" class="primary landing-primary">Criar sala</button>
           <button id="network-other" class="ghost network-other" type="button" hidden>Escolher outro IP</button>
           <div id="network-picker" class="network-picker" hidden>
@@ -69,6 +70,14 @@
             <input id="host-ip" maxlength="21" inputmode="decimal" autocomplete="off" placeholder="IP DO HOST" aria-label="IP do host" />
             <button id="join-room">Entrar</button>
           </div>
+          <section class="nearby-rooms" aria-labelledby="nearby-rooms-title">
+            <div class="nearby-rooms-heading">
+              <span id="nearby-rooms-title">Salas na sua VPN</span>
+              <button id="network-discover" class="text-button" type="button">Buscar</button>
+            </div>
+            <div id="network-discovery-status" class="small muted" role="status">Conecte Hamachi, Radmin ou outra VPN para encontrar salas.</div>
+            <div id="network-peer-list" class="network-peer-list"></div>
+          </section>
           <div class="landing-trust">
             <span>♙<small>sem cadastro</small></span>
             <span>◷<small>sala efêmera</small></span>
@@ -197,6 +206,7 @@
             <option value="economic">Econômico · 480p/30 (menos banda)</option>
             <option value="sharp">Nitidez · 1080p/30 (texto e trabalho)</option>
             <option value="fluid">Fluido · 720p/60 (vídeo e jogos)</option>
+            <option value="maximum">Máximo · 1080p/60 (muito pesado)</option>
           </select>
           <p class="screen-quality-note muted">A qualidade pode ser reduzida automaticamente para cada espectador quando a rede ficar instável.</p>
           <label class="screen-audio-option" for="include-screen-audio">
@@ -254,6 +264,17 @@
           <div class="settings-footer"><button id="audio-settings-reset" class="ghost" type="button">Restaurar padrão</button><button id="audio-settings-apply" class="primary" type="button">Aplicar</button></div>
         </div>
       </section>
+
+      <div id="context-menu" class="context-menu" role="menu" hidden>
+        <strong id="context-menu-title">Controles locais</strong>
+        <button id="context-menu-mute" class="context-menu-action" type="button">Silenciar</button>
+        <label class="context-volume" for="context-menu-volume">
+          <span>Volume</span>
+          <output id="context-menu-volume-value" for="context-menu-volume">100%</output>
+        </label>
+        <input id="context-menu-volume" type="range" min="0" max="100" step="1" value="100" />
+        <button id="context-menu-close-stream" class="context-menu-action danger" type="button">Fechar transmissão</button>
+      </div>
     </main>
     <script src="./app.bundle.js"></script>
   </body>

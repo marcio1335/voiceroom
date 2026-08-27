@@ -2,7 +2,7 @@ const path = require('node:path');
 const { app, BrowserWindow, desktopCapturer, ipcMain, Menu, nativeImage, session, shell, Tray } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { LocalServerController } = require('./local-server');
-const { getNetworkInterfaces, getPreferredVpnAddress, getVpnCandidates } = require('./network');
+const { discoverVpnPeers, getNetworkInterfaces, getPreferredVpnAddress, getVpnCandidates } = require('./network');
 const { normalizeHostAddress } = require('../../../shared/validation');
 
 let mainWindow;
@@ -255,6 +255,7 @@ app.whenReady().then(() => {
     const preferred = getPreferredVpnAddress(interfaces);
     return { interfaces, candidates, preferred };
   });
+  ipcMain.handle('network:discover-peers', async () => ({ peers: await discoverVpnPeers() }));
   ipcMain.handle('signaling:set-target', (_event, value) => {
     const origin = signalingOrigin(value);
     if (!origin) return { ok: false, errorCode: 'INVALID_HOST_IP', message: 'O endereço do host não é válido.' };

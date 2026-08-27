@@ -1,5 +1,12 @@
 const os = require('node:os');
+const http = require('node:http');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
 const { normalizeHostAddress, normalizeIPv4, validateIPv4 } = require('../../../shared/validation');
+
+const execFileAsync = promisify(execFile);
+const DISCOVERY_PORT = 32145;
+const MAX_DISCOVERY_NEIGHBORS = 64;
 
 const VPN_INTERFACE_PATTERNS = Object.freeze([
   { provider: 'Radmin VPN', pattern: /radmin/i, score: 80 },
@@ -85,13 +92,94 @@ function getPreferredVpnAddress(interfaces = getNetworkInterfaces()) {
   return null;
 }
 
+function parseArpTable(output = '') {
+  const entries = [];
+  let localAddress = null;
+  for (const line of String(output).split(/\r?\n/)) {
+    const header = line.match(/(?:interface|interface:|interfaz)\s*:?\s*(\d{1,3}(?:\.\d{1,3}){3})\s+---/i);
+    if (header) {
+      localAddress = validateIPv4(header[1]) ? normalizeIPv4(header[1]) : null;
+      continue;
+    }
+    const neighbor = line.match(/^\s*(\d{1,3}(?:\.\d{1,3}){3})\s+([0-9a-f]{2}(?:[-:][0-9a-f]{2}){5})\s+/i);
+    if (!neighbor || !localAddress || !validateIPv4(neighbor[1])) continue;
+    const address = normalizeIPv4(neighbor[1]);
+    if (address === localAddress || address.endsWith('.255') || address.startsWith('224.')) continue;
+    entries.push({ localAddress, address, macAddress: neighbor[2].toLowerCase() });
+  }
+  return [...new Map(entries.map((entry) => [`${entry.localAddress}:${entry.address}`, entry])).values()];
+}
+
+function probeVoiceRoom(address, { port = DISCOVERY_PORT, timeoutMs = 650 } = {}) {
+  return new Promise((resolve) => {
+    const request = http.get({ host: address, port, path: '/health', timeout: timeoutMs, agent: false }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => {
+        if (body.length < 4096) body += chunk;
+      });
+      response.on('end', () => {
+        try {
+          const payload = JSON.parse(body);
+          resolve(response.statusCode === 200 && payload?.app === 'VoiceRoom'
+            ? { address, port, protocolVersion: payload.version || null }
+            : null);
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    request.on('timeout', () => request.destroy());
+    request.on('error', () => resolve(null));
+  });
+}
+
+async function discoverVpnPeers({
+  interfaces = getNetworkInterfaces(),
+  arpOutput,
+  runArp = () => execFileAsync('arp', ['-a'], { windowsHide: true, encoding: 'utf8', timeout: 3_000, maxBuffer: 256 * 1024 }),
+  probe = probeVoiceRoom
+} = {}) {
+  const vpnInterfaces = getVpnCandidates(interfaces);
+  if (!vpnInterfaces.length) return [];
+  let output = arpOutput;
+  if (output === undefined) {
+    try {
+      const result = await runArp();
+      output = result?.stdout || '';
+    } catch {
+      return [];
+    }
+  }
+  const byLocalAddress = new Map(vpnInterfaces.map((entry) => [entry.address, entry]));
+  const neighbors = parseArpTable(output)
+    .filter((entry) => byLocalAddress.has(entry.localAddress))
+    .slice(0, MAX_DISCOVERY_NEIGHBORS);
+  const results = await Promise.all(neighbors.map(async (neighbor) => {
+    const room = await probe(neighbor.address, { port: DISCOVERY_PORT });
+    if (!room) return null;
+    const network = byLocalAddress.get(neighbor.localAddress);
+    return {
+      address: neighbor.address,
+      port: room.port || DISCOVERY_PORT,
+      provider: network.provider || 'VPN',
+      interfaceName: network.name,
+      protocolVersion: room.protocolVersion || null
+    };
+  }));
+  return results.filter(Boolean).sort((left, right) => left.address.localeCompare(right.address, undefined, { numeric: true }));
+}
+
 module.exports = {
   classifyInterface,
+  discoverVpnPeers,
   getNetworkInterfaces,
   getPreferredVpnAddress,
   getVpnCandidates,
   ipv4ToNumber,
   normalizeHostAddress,
+  parseArpTable,
+  probeVoiceRoom,
   scoreVpnAddress,
   validateIPv4
 };

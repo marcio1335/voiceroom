@@ -1,9 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  discoverVpnPeers,
   getNetworkInterfaces,
   getPreferredVpnAddress,
-  getVpnCandidates
+  getVpnCandidates,
+  parseArpTable
 } = require('../client/src/main/network');
 const { normalizeHostAddress } = require('../shared/validation');
 
@@ -39,4 +41,46 @@ test('normaliza IPv4 e porta padrão ou explícita', () => {
   assert.throws(() => normalizeHostAddress('999.999.999.999'), (error) => error.code === 'INVALID_HOST_IP');
   assert.throws(() => normalizeHostAddress('26.42.13.7:0'), (error) => error.code === 'INVALID_HOST_PORT');
   assert.throws(() => normalizeHostAddress('http://26.42.13.7'), (error) => error.code === 'INVALID_HOST_IP');
+});
+
+test('interpreta somente vizinhos ARP associados a uma interface', () => {
+  const entries = parseArpTable(`
+Interface: 26.42.13.7 --- 0x12
+  Internet Address      Physical Address      Type
+  26.42.13.8            aa-bb-cc-dd-ee-01     dynamic
+  26.42.13.255          ff-ff-ff-ff-ff-ff     static
+Interface: 192.168.0.10 --- 0x7
+  192.168.0.20          aa-bb-cc-dd-ee-02     dynamic
+`);
+  assert.deepEqual(entries.map(({ localAddress, address }) => ({ localAddress, address })), [
+    { localAddress: '26.42.13.7', address: '26.42.13.8' },
+    { localAddress: '192.168.0.10', address: '192.168.0.20' }
+  ]);
+});
+
+test('descobre somente VoiceRoom disponível na interface VPN', async () => {
+  const interfaces = getNetworkInterfaces({
+    'Radmin VPN': [{ address: '26.42.13.7', family: 'IPv4', internal: false }],
+    Ethernet: [{ address: '192.168.0.10', family: 'IPv4', internal: false }]
+  });
+  const peers = await discoverVpnPeers({
+    interfaces,
+    arpOutput: `
+Interface: 26.42.13.7 --- 0x12
+  26.42.13.8            aa-bb-cc-dd-ee-01     dynamic
+  26.42.13.9            aa-bb-cc-dd-ee-02     dynamic
+Interface: 192.168.0.10 --- 0x7
+  192.168.0.20          aa-bb-cc-dd-ee-03     dynamic
+`,
+    probe: async (address) => address === '26.42.13.8'
+      ? { address, port: 32145, protocolVersion: 1 }
+      : null
+  });
+  assert.deepEqual(peers, [{
+    address: '26.42.13.8',
+    port: 32145,
+    provider: 'Radmin VPN',
+    interfaceName: 'Radmin VPN',
+    protocolVersion: 1
+  }]);
 });
