@@ -28,10 +28,11 @@ function normalizeServerError(error, port = DEFAULT_SIGNALING_PORT, attempts = 1
 }
 
 class LocalServerController {
-  constructor({ onState = () => {}, createServer = createSignalingServer, historyFile = null } = {}) {
+  constructor({ onState = () => {}, createServer = createSignalingServer, historyFile = null, moderationFile = null } = {}) {
     this.onState = onState;
     this.createServer = createServer;
     this.historyFile = historyFile;
+    this.moderationFile = moderationFile;
     this.server = null;
     this.status = Object.freeze({
       state: 'stopped',
@@ -84,7 +85,8 @@ class LocalServerController {
             roomCodeLength: DEFAULT_ROOM_CODE_LENGTH,
             roomCode: LOCAL_ROOM_CODE,
             allowedOrigin: '*',
-            historyFile: this.historyFile
+            historyFile: this.historyFile,
+            moderationFile: this.moderationFile
           });
           this.server = server;
           try {

@@ -57,6 +57,8 @@ class RoomStore {
       participants: new Map([[participant.participantId, participant]]),
       screenSharingParticipantIds: [],
       screenSharingParticipantId: null,
+      chatName: 'Chat da sala',
+      moderatorParticipantIds: new Set(),
       createdAt: this.now()
     };
     this.rooms.set(code, room);
@@ -128,6 +130,7 @@ class RoomStore {
     if (!participant) return null;
     this.#clearResumeTimer(participantId);
     room.participants.delete(participantId);
+    room.moderatorParticipantIds.delete(participantId);
     if (room.screenSharingParticipantIds.includes(participantId)) this.#removeScreenShare(room, participantId);
     if (room.participants.size === 0) this.rooms.delete(code);
     return { room, participant, roomDeleted: !this.rooms.has(code) };
@@ -145,6 +148,50 @@ class RoomStore {
     if (!found) throw new Error('NOT_IN_ROOM');
     found.participant.avatar = avatar;
     return found;
+  }
+
+  setLatency(socketId, latencyMs) {
+    const found = this.findBySocket(socketId);
+    if (!found) throw new Error('NOT_IN_ROOM');
+    const value = Number(latencyMs);
+    if (!Number.isFinite(value) || value < 0) throw new Error('INVALID_REQUEST');
+    found.participant.latencyMs = Math.min(9_999, Math.round(value));
+    return found;
+  }
+
+  canManageRoom(socketId) {
+    const found = this.findBySocket(socketId);
+    return Boolean(found && (found.participant.role === 'host' || found.room.moderatorParticipantIds.has(found.participant.participantId)));
+  }
+
+  updateSettings(socketId, { chatName }) {
+    const found = this.findBySocket(socketId);
+    if (!found) throw new Error('NOT_IN_ROOM');
+    if (!this.canManageRoom(socketId)) throw new Error('PERMISSION_DENIED');
+    if (typeof chatName === 'string') {
+      const normalized = chatName.trim().replace(/\s+/g, ' ');
+      if (!normalized || normalized.length > 40 || /[<>]/.test(normalized)) throw new Error('INVALID_REQUEST');
+      found.room.chatName = normalized;
+    }
+    return found;
+  }
+
+  setModerator(socketId, participantId, allowed) {
+    const found = this.findBySocket(socketId);
+    if (!found) throw new Error('NOT_IN_ROOM');
+    if (found.participant.role !== 'host') throw new Error('PERMISSION_DENIED');
+    const target = found.room.participants.get(participantId);
+    if (!target || target.role === 'host') throw new Error('PARTICIPANT_NOT_FOUND');
+    if (allowed) found.room.moderatorParticipantIds.add(participantId);
+    else found.room.moderatorParticipantIds.delete(participantId);
+    return found;
+  }
+
+  forceMuteParticipant(room, participantId, muted = true) {
+    const participant = room?.participants.get(participantId);
+    if (!participant) throw new Error('PARTICIPANT_NOT_FOUND');
+    participant.muted = Boolean(muted);
+    return participant;
   }
 
   startScreenShare(socketId) {
@@ -177,11 +224,14 @@ class RoomStore {
         avatar: participant.avatar,
         role: participant.role,
         muted: participant.muted,
+        latencyMs: Number.isFinite(participant.latencyMs) ? participant.latencyMs : null,
         screenSharing: participant.screenSharing,
         connected: Boolean(participant.socketId)
       })),
       screenSharingParticipantIds: [...room.screenSharingParticipantIds],
       screenSharingParticipantId: room.screenSharingParticipantIds[0] || null,
+      chatName: room.chatName,
+      moderatorParticipantIds: [...room.moderatorParticipantIds],
       createdAt: room.createdAt
     };
   }

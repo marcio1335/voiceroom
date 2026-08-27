@@ -28,6 +28,7 @@ function signalingOrigin(value) {
 
 const localServer = new LocalServerController({
   historyFile: path.join(app.getPath('userData'), 'chat-history.json'),
+  moderationFile: path.join(app.getPath('userData'), 'moderation.json'),
   onState: (state) => {
     if (mainWindow?.webContents && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('local-server:state', state);

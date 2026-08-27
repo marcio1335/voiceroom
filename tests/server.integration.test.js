@@ -60,6 +60,18 @@ test('cria, entra, permite dez pessoas e arbitra duas transmissões', async () =
     assert.equal(secondLock.ok, true);
     const joinedTwo = await request(clients[2], 'room:join', { roomCode, displayName: 'Pessoa 2' });
     assert.equal(joinedTwo.ok, true);
+    const voteState = waitForEvent(clients[1], 'vote:state');
+    const voteStarted = await request(clients[0], 'vote:start', {
+      targetParticipantId: joinedTwo.data.participantId,
+      action: 'mute',
+      durationSeconds: 30
+    });
+    assert.equal(voteStarted.ok, true);
+    const activeVote = (await voteState).vote;
+    assert.equal(activeVote.status, 'active');
+    const forcedMute = waitForEvent(clients[2], 'moderation:forced-mute');
+    assert.equal((await request(clients[1], 'vote:cast', { voteId: activeVote.voteId, approve: true })).ok, true);
+    assert.ok((await forcedMute).until > Date.now());
     const busy = await request(clients[2], 'screen:start-request');
     assert.equal(busy.ok, false);
     assert.equal(busy.errorCode, 'SCREEN_BUSY');

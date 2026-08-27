@@ -75,7 +75,10 @@ class SocketClient {
       'screen:stopped',
       'screen:viewer-joined',
       'screen:viewer-left',
-      'chat:message'
+      'chat:message',
+      'vote:state',
+      'moderation:forced-mute',
+      'moderation:banned'
     ]) {
       this.socket.on(event, (payload) => this.onEvent(event, payload));
     }
@@ -160,6 +163,24 @@ class SocketClient {
   setProfileAvatar(avatar) { return this.request('participant:profile', { avatar }); }
 
   sendChatMessage(kind, content) { return this.request('chat:message', { kind, content }); }
+
+  updateRoomSettings(chatName) { return this.request('room:settings-update', { chatName }); }
+
+  setRoomModerator(targetParticipantId, allowed) {
+    return this.request('room:permission-update', { targetParticipantId, allowed });
+  }
+
+  startVote(targetParticipantId, action, durationSeconds = 0) {
+    return this.request('vote:start', { targetParticipantId, action, durationSeconds });
+  }
+
+  castVote(voteId, approve) { return this.request('vote:cast', { voteId, approve }); }
+
+  listBans() { return this.request('moderation:bans-list', {}); }
+
+  revokeBan(banId) { return this.request('moderation:ban-revoke', { banId }); }
+
+  setLatency(latencyMs) { return this.request('participant:latency', { latencyMs }); }
 
   sendSignal(event, targetParticipantId, signal) {
     return this.request(event, { targetParticipantId, signal });

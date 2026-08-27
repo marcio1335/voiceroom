@@ -57,6 +57,7 @@ const elements = {
   leave: document.querySelector('#leave-room'),
   screenStage: document.querySelector('#screen-stage'),
   screenEmptyStage: document.querySelector('#screen-empty-stage'),
+  screenGallery: document.querySelector('#screen-gallery'),
   screenShareList: document.querySelector('#screen-share-list'),
   screenDiagnosticsToggle: document.querySelector('#screen-diagnostics-toggle'),
   screenDiagnostics: document.querySelector('#screen-diagnostics'),
@@ -64,6 +65,7 @@ const elements = {
   sourcePicker: document.querySelector('#source-picker'),
   sourceList: document.querySelector('#source-list'),
   screenQuality: document.querySelector('#screen-quality'),
+  screenQualityRecommendation: document.querySelector('#screen-quality-recommendation'),
   includeScreenAudio: document.querySelector('#include-screen-audio'),
   cancelSource: document.querySelector('#cancel-source'),
   status: document.querySelector('#status'),
@@ -77,12 +79,15 @@ const elements = {
   roomDuration: document.querySelector('#room-duration'),
   voiceChannel: document.querySelector('#voice-channel'),
   textChannel: document.querySelector('#text-channel'),
+  textChannelName: document.querySelector('#text-channel-name'),
   voiceView: document.querySelector('#voice-view'),
   textView: document.querySelector('#text-view'),
   playerOnline: document.querySelector('#player-online'),
+  streamSwitcher: document.querySelector('#stream-switcher'),
   presenceToasts: document.querySelector('#presence-toasts'),
   presenceNotifications: document.querySelector('#presence-notifications'),
   chatMessages: document.querySelector('#chat-messages'),
+  chatTitle: document.querySelector('#chat-title'),
   chatEmpty: document.querySelector('#chat-empty'),
   chatForm: document.querySelector('#chat-form'),
   chatInput: document.querySelector('#chat-input'),
@@ -105,7 +110,34 @@ const elements = {
   contextMenuMute: document.querySelector('#context-menu-mute'),
   contextMenuVolume: document.querySelector('#context-menu-volume'),
   contextMenuVolumeValue: document.querySelector('#context-menu-volume-value'),
-  contextMenuCloseStream: document.querySelector('#context-menu-close-stream')
+  contextMenuCloseStream: document.querySelector('#context-menu-close-stream'),
+  contextMenuWatch: document.querySelector('#context-menu-watch'),
+  contextMenuModeration: document.querySelector('#context-menu-moderation'),
+  contextVoteMute: document.querySelector('#context-vote-mute'),
+  contextBanSeconds: document.querySelector('#context-ban-seconds'),
+  contextVoteBanTemp: document.querySelector('#context-vote-ban-temp'),
+  contextVoteBanPermanent: document.querySelector('#context-vote-ban-permanent'),
+  settingsAudioTab: document.querySelector('#settings-audio-tab'),
+  settingsRoomTab: document.querySelector('#settings-room-tab'),
+  settingsAudioPane: document.querySelector('#settings-audio-pane'),
+  settingsRoomPane: document.querySelector('#settings-room-pane'),
+  settingsFooter: document.querySelector('#settings-footer'),
+  roomSettingsHint: document.querySelector('#room-settings-hint'),
+  roomChatName: document.querySelector('#room-chat-name'),
+  roomChatNameSave: document.querySelector('#room-chat-name-save'),
+  roomPermissionControls: document.querySelector('#room-permission-controls'),
+  roomModeratorSelect: document.querySelector('#room-moderator-select'),
+  roomModeratorToggle: document.querySelector('#room-moderator-toggle'),
+  roomBansRefresh: document.querySelector('#room-bans-refresh'),
+  roomBansList: document.querySelector('#room-bans-list'),
+  votePanel: document.querySelector('#vote-panel'),
+  voteTitle: document.querySelector('#vote-title'),
+  voteDetails: document.querySelector('#vote-details'),
+  voteCounts: document.querySelector('#vote-counts'),
+  voteTime: document.querySelector('#vote-time'),
+  voteActions: document.querySelector('#vote-actions'),
+  voteYes: document.querySelector('#vote-yes'),
+  voteNo: document.querySelector('#vote-no')
 };
 
 let socketClient;
@@ -127,6 +159,7 @@ let selectedScreenParticipantId = null;
 let watchingScreenParticipantId = null;
 let screenWatchActionInProgress = false;
 let latencyTimer = null;
+let lastMeasuredLatency = null;
 let reconnectInProgress = false;
 let capturingPttKey = false;
 let pttPressed = false;
@@ -150,6 +183,9 @@ let presenceAudioContext = null;
 let presenceReady = false;
 let previousParticipants = new Map();
 let chatMessages = [];
+let activeVote = null;
+let voteTimer = null;
+let forcedMutedUntil = null;
 const participantVolumeBeforeMute = new Map();
 const PARTICIPANT_VOLUME_STORAGE_KEY = 'voiceroom.participantVolumes';
 const DISPLAY_NAME_STORAGE_KEY = 'voiceroom.displayName';
@@ -472,6 +508,9 @@ function syncContextMenu() {
   elements.contextMenuVolumeValue.textContent = `${Math.round(value * 100)}%`;
   elements.contextMenuMute.textContent = value === 0 ? 'Voltar a ouvir' : 'Silenciar para mim';
   elements.contextMenuCloseStream.hidden = !isScreen;
+  const isParticipant = kind === 'participant';
+  elements.contextMenuWatch.hidden = !isParticipant || !participant?.screenSharing;
+  elements.contextMenuModeration.hidden = !isParticipant || participant?.role === 'host';
 }
 
 function openContextMenu(kind, participantId, x, y) {
@@ -509,6 +548,22 @@ function toggleContextTargetMute() {
     }
   }
   syncContextMenu();
+}
+
+async function watchContextTransmission() {
+  const participantId = contextMenuTarget?.participantId;
+  closeContextMenu();
+  if (!participantId) return;
+  switchChannel('voice');
+  await toggleScreenWatching(participantId);
+}
+
+async function startContextVote(action, durationSeconds = 0) {
+  const participantId = contextMenuTarget?.participantId;
+  closeContextMenu();
+  if (!participantId) return;
+  const response = await socketClient?.startVote(participantId, action, durationSeconds);
+  if (!response?.ok) showNotice(responseError(response), 'warning');
 }
 
 function renderLocalProfileNote() {
@@ -584,6 +639,8 @@ async function changeAudioProcessing() {
 
 function openAudioSettings() {
   if (!elements.audioSettingsModal) return;
+  renderRoomSettings();
+  switchSettingsPane('audio');
   elements.audioSettingsModal.hidden = false;
   elements.audioSettingsClose?.focus();
 }
@@ -649,11 +706,40 @@ function updateLatencyLabel(value) {
   elements.latency.dataset.type = value > 300 ? 'error' : value > 180 ? 'warning' : 'success';
 }
 
+function getRecommendedScreenQuality() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const downlink = Number(connection?.downlink);
+  const hasDownlink = Number.isFinite(downlink) && downlink > 0;
+  const latency = Number(lastMeasuredLatency);
+  const hasLatency = Number.isFinite(latency);
+  let profile = 'balanced';
+  if ((hasDownlink && downlink < 3) || (hasLatency && latency > 220)) profile = 'economic';
+  else if (hasDownlink && downlink >= 25 && (!hasLatency || latency <= 45)) profile = 'maximum';
+  else if (hasDownlink && downlink >= 10 && (!hasLatency || latency <= 90)) profile = 'fluid';
+  else if (hasDownlink && downlink >= 7 && (!hasLatency || latency <= 120)) profile = 'sharp';
+  const details = [
+    hasDownlink ? `${downlink.toFixed(downlink >= 10 ? 0 : 1)} Mbps` : null,
+    hasLatency ? `${Math.round(latency)} ms` : null
+  ].filter(Boolean).join(' · ');
+  return { profile, details };
+}
+
+function syncScreenQualityRecommendation({ select = false } = {}) {
+  if (!elements.screenQualityRecommendation || !elements.screenQuality) return;
+  const recommendation = getRecommendedScreenQuality();
+  const label = elements.screenQuality.querySelector(`option[value="${recommendation.profile}"]`)?.textContent || recommendation.profile;
+  elements.screenQualityRecommendation.textContent = `Recomendado para sua conexão: ${label}${recommendation.details ? ` · ${recommendation.details}` : ''}`;
+  if (select) elements.screenQuality.value = recommendation.profile;
+}
+
 async function updateLatency() {
   if (!roomCode || !socketClient) return;
   const mediaLatency = await peerManager?.getLatency?.();
   const latency = Number.isFinite(mediaLatency) ? mediaLatency : await socketClient.measureLatency();
+  lastMeasuredLatency = Number.isFinite(latency) ? latency : null;
   updateLatencyLabel(latency);
+  syncScreenQualityRecommendation();
+  if (Number.isFinite(latency)) socketClient.setLatency(latency).catch(() => {});
 }
 
 function startLatencyMonitoring() {
@@ -694,6 +780,118 @@ function showNotice(message, type = 'error', duration = 6_000) {
   elements.notice.hidden = false;
   window.clearTimeout(showNotice.timeout);
   showNotice.timeout = window.setTimeout(() => { elements.notice.hidden = true; }, duration);
+}
+
+function canManageCurrentRoom() {
+  const self = currentRoom?.participants?.find((participant) => participant.participantId === selfId);
+  return Boolean(self && (self.role === 'host' || currentRoom?.moderatorParticipantIds?.includes(selfId)));
+}
+
+function switchSettingsPane(pane) {
+  const room = pane === 'room';
+  elements.settingsAudioPane.hidden = room;
+  elements.settingsRoomPane.hidden = !room;
+  elements.settingsFooter.hidden = room;
+  elements.settingsAudioTab.classList.toggle('is-active', !room);
+  elements.settingsRoomTab.classList.toggle('is-active', room);
+  if (room) loadRoomBans();
+}
+
+function renderRoomSettings() {
+  if (!elements.roomChatName || !currentRoom) return;
+  const manageable = canManageCurrentRoom();
+  const self = currentRoom.participants.find((participant) => participant.participantId === selfId);
+  elements.roomChatName.value = currentRoom.chatName || 'Chat da sala';
+  elements.roomChatName.disabled = !manageable;
+  elements.roomChatNameSave.disabled = !manageable;
+  elements.roomSettingsHint.textContent = manageable
+    ? 'Você pode alterar a sala. Mudanças são sincronizadas para todos.'
+    : 'Somente o host ou um moderador autorizado pode alterar a sala.';
+  elements.roomPermissionControls.hidden = self?.role !== 'host';
+  elements.roomBansRefresh.disabled = !manageable;
+  elements.roomModeratorSelect.replaceChildren();
+  for (const participant of currentRoom.participants.filter((item) => item.role !== 'host')) {
+    const option = document.createElement('option');
+    option.value = participant.participantId;
+    const moderator = currentRoom.moderatorParticipantIds?.includes(participant.participantId);
+    option.textContent = `${participant.displayName}${moderator ? ' · autorizado' : ''}`;
+    elements.roomModeratorSelect.append(option);
+  }
+  syncModeratorButton();
+}
+
+function syncModeratorButton() {
+  const participantId = elements.roomModeratorSelect?.value;
+  const allowed = currentRoom?.moderatorParticipantIds?.includes(participantId);
+  elements.roomModeratorToggle.textContent = allowed ? 'Remover permissão' : 'Conceder permissão';
+  elements.roomModeratorToggle.disabled = !participantId;
+}
+
+async function loadRoomBans() {
+  if (!canManageCurrentRoom()) {
+    elements.roomBansList.innerHTML = '<span class="small muted">Sem permissão para consultar bans.</span>';
+    return;
+  }
+  const response = await socketClient?.listBans();
+  if (!response?.ok) return;
+  renderRoomBans(response.data.bans);
+}
+
+function renderRoomBans(bans = []) {
+  elements.roomBansList.replaceChildren();
+  if (!bans.length) {
+    const empty = document.createElement('span');
+    empty.className = 'small muted';
+    empty.textContent = 'Nenhum ban ativo.';
+    elements.roomBansList.append(empty);
+    return;
+  }
+  for (const ban of bans) {
+    const row = document.createElement('div');
+    row.className = 'room-ban-row';
+    const copy = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = ban.displayName || 'Perfil';
+    const expiry = document.createElement('span');
+    expiry.textContent = ban.expiresAt ? `Até ${new Date(ban.expiresAt).toLocaleString('pt-BR')}` : 'Permanente';
+    copy.append(name, expiry);
+    const revoke = document.createElement('button');
+    revoke.type = 'button';
+    revoke.className = 'ghost compact-button';
+    revoke.textContent = 'Remover';
+    revoke.addEventListener('click', async () => {
+      const response = await socketClient.revokeBan(ban.id);
+      if (response?.ok) renderRoomBans(response.data.bans);
+      else showNotice(responseError(response));
+    });
+    row.append(copy, revoke);
+    elements.roomBansList.append(row);
+  }
+}
+
+function renderVote(vote) {
+  activeVote = vote;
+  window.clearInterval(voteTimer);
+  if (!vote || vote.status !== 'active') {
+    if (vote) showPresenceToast(vote.status === 'passed' ? 'A votação foi aprovada.' : 'A votação foi encerrada sem aprovação.', vote.status === 'passed' ? 'join' : 'leave');
+    elements.votePanel.hidden = true;
+    voteTimer = null;
+    return;
+  }
+  const action = vote.action === 'mute'
+    ? 'mutar por 30 segundos'
+    : vote.durationSeconds ? `banir por ${vote.durationSeconds} segundos` : 'banir permanentemente';
+  elements.voteTitle.textContent = `Votação sobre ${vote.targetDisplayName}`;
+  elements.voteDetails.textContent = `Proposta: ${action}.`;
+  elements.voteCounts.textContent = `${vote.yes} sim · ${vote.no} não · ${vote.threshold} necessários`;
+  elements.voteActions.hidden = false;
+  elements.votePanel.hidden = false;
+  const updateTime = () => {
+    const seconds = Math.max(0, Math.ceil((vote.endsAt - Date.now()) / 1_000));
+    elements.voteTime.textContent = `${seconds}s`;
+  };
+  updateTime();
+  voteTimer = window.setInterval(updateTime, 250);
 }
 
 function playPresenceTone(kind = 'join') {
@@ -982,7 +1180,11 @@ async function installApplicationUpdate() {
 function responseError(response) {
   if (response?.errorCode === 'ROOM_NOT_FOUND') return 'Esta sala não existe.';
   if (response?.errorCode === 'ROOM_EXISTS') return 'Já existe uma sala ativa neste computador.';
-  if (response?.errorCode === 'ROOM_FULL') return 'A sala atingiu o limite de 5 participantes.';
+  if (response?.errorCode === 'ROOM_FULL') return 'A sala atingiu o limite de 10 participantes.';
+  if (response?.errorCode === 'PERMISSION_DENIED') return 'Você não tem permissão para fazer isso.';
+  if (response?.errorCode === 'BANNED') return 'Este perfil está banido desta sala.';
+  if (response?.errorCode === 'ALREADY_VOTED') return 'Você já votou ou já existe uma votação ativa.';
+  if (response?.errorCode === 'VOTE_NOT_FOUND') return 'Essa votação já terminou.';
   if (response?.errorCode === 'SCREEN_BUSY') return 'A sala já atingiu o limite de 2 transmissões.';
   if (response?.errorCode === 'SCREEN_NOT_ACTIVE') return 'Essa transmissão não está ativa.';
   if (response?.errorCode === 'PORT_IN_USE') return response.message || `A porta ${DEFAULT_SIGNALING_PORT} já está sendo utilizada por outro aplicativo.`;
@@ -1014,10 +1216,15 @@ function renderParticipants() {
     stateElement.setAttribute('aria-hidden', 'true');
     renderAvatarElement(stateElement, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
     const nameElement = document.createElement('span');
-    const labels = [];
-    if (participant.role === 'host') labels.push('Host');
-    if (participant.participantId === selfId) labels.push('você');
-    nameElement.textContent = participant.displayName + (labels.length ? ` (${labels.join(', ')})` : '');
+    nameElement.className = 'participant-name';
+    nameElement.textContent = participant.displayName;
+    if (participant.role === 'host') {
+      const crown = document.createElement('span');
+      crown.className = 'host-crown';
+      crown.title = 'Criador da sala';
+      crown.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 8 4 4 4-7 4 7 4-4-2 10H6L4 8Z"/></svg>';
+      nameElement.append(crown);
+    }
     const identity = document.createElement('button');
     identity.className = 'participant-identity';
     identity.type = 'button';
@@ -1036,6 +1243,10 @@ function renderParticipants() {
       }
     });
     identity.append(stateElement, nameElement);
+    const latencyElement = document.createElement('span');
+    latencyElement.className = 'participant-latency';
+    latencyElement.textContent = Number.isFinite(participant.latencyMs) ? `${participant.latencyMs} ms` : '— ms';
+    latencyElement.title = 'Latência até o host';
     const statusElement = document.createElement('span');
     statusElement.className = 'participant-status';
     statusElement.setAttribute('aria-hidden', 'true');
@@ -1046,7 +1257,7 @@ function renderParticipants() {
       live.title = 'Transmitindo ao vivo';
       nameElement.append(live);
     }
-    item.append(identity, statusElement);
+    item.append(identity, latencyElement, statusElement);
     if (participant.participantId !== selfId && participant.connected) {
       item.addEventListener('contextmenu', (event) => {
         event.preventDefault();
@@ -1180,6 +1391,9 @@ function renderVoiceControls() {
       ? 'Desative o ensurdecer para ativar o microfone'
       : microphoneMuted ? 'Ativar microfone' : 'Mutar microfone';
     microphoneControl.setAttribute('aria-label', microphoneControl.title);
+    const forced = forcedMutedUntil && forcedMutedUntil > Date.now();
+    microphoneControl.disabled = Boolean(forced);
+    if (forced) microphoneControl.title = `Mutado por votação até ${new Date(forcedMutedUntil).toLocaleTimeString('pt-BR')}`;
   }
 
   const deafenControl = elements.voiceDeafen;
@@ -1197,6 +1411,12 @@ function renderRoom(room) {
   currentRoom = room;
   if (elements.activeIp) elements.activeIp.textContent = hostIp ? `${hostIp}:${hostPort}` : '—';
   const screenParticipantIds = getScreenParticipantIds(room);
+  const hasAnyScreen = screenParticipantIds.length > 0 || sharingScreen;
+  elements.voiceChannel.hidden = !hasAnyScreen;
+  if (!hasAnyScreen && !elements.voiceView.hidden) switchChannel('text');
+  const chatName = room.chatName || 'Chat da sala';
+  elements.textChannelName.textContent = chatName;
+  elements.chatTitle.textContent = chatName;
   elements.screen.disabled = !sharingScreen && screenParticipantIds.length >= 2;
   elements.screen.dataset.sharing = String(sharingScreen);
   elements.screen.title = sharingScreen ? 'Parar transmissão' : 'Compartilhar tela';
@@ -1214,6 +1434,7 @@ function renderRoom(room) {
   renderScreenShareList(room);
   renderParticipants();
   renderPlayerOnline();
+  renderRoomSettings();
   peerManager?.syncParticipants(room.participants).catch((error) => showNotice(error.message));
   renderVoiceControls();
   window.requestAnimationFrame(fitScreenStage);
@@ -1224,6 +1445,44 @@ function renderScreenShareList(room) {
   const activeParticipants = (room?.participants || []).filter((participant) => (
     participant.screenSharing || (participant.participantId === selfId && sharingScreen)
   ));
+  elements.screenGallery.replaceChildren();
+  elements.streamSwitcher.replaceChildren();
+  const hasVisibleTile = Boolean(elements.screenStage.querySelector('[data-screen-tile]'));
+  elements.screenGallery.hidden = hasVisibleTile || activeParticipants.length === 0;
+  elements.screenEmptyStage.hidden = activeParticipants.length > 0;
+  for (const participant of activeParticipants) {
+    const switchButton = document.createElement('button');
+    switchButton.type = 'button';
+    switchButton.className = 'stream-switch-button';
+    switchButton.classList.toggle('is-active', participant.participantId === selectedScreenParticipantId || participant.participantId === watchingScreenParticipantId);
+    switchButton.title = `Assistir ${participant.displayName}`;
+    renderAvatarElement(switchButton, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
+    switchButton.addEventListener('click', () => {
+      if (participant.participantId === selfId) {
+        if (peerManager?.screenStream) viewOwnScreen();
+        else selectScreenParticipant(selfId);
+      } else toggleScreenWatching(participant.participantId);
+    });
+    elements.streamSwitcher.append(switchButton);
+    if (!hasVisibleTile) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'screen-gallery-card';
+      const avatar = document.createElement('span');
+      avatar.className = 'screen-gallery-avatar';
+      renderAvatarElement(avatar, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
+      const name = document.createElement('strong');
+      name.textContent = participant.displayName;
+      const action = document.createElement('span');
+      action.textContent = participant.participantId === selfId ? 'Sua transmissão' : 'Clique para assistir';
+      card.append(avatar, name, action);
+      card.addEventListener('click', () => {
+        if (participant.participantId === selfId && peerManager?.screenStream) viewOwnScreen();
+        else if (participant.participantId !== selfId) toggleScreenWatching(participant.participantId);
+      });
+      elements.screenGallery.append(card);
+    }
+  }
   if (activeParticipants.some((participant) => participant.participantId !== selfId)) {
     const hint = document.createElement('span');
     hint.className = 'screen-share-hint small muted';
@@ -1355,7 +1614,7 @@ function enterRoom(result) {
   renderRoom(result.data.room);
   startRoomDuration(result.data.room.createdAt);
   loadChatHistory(result.data.chatHistory);
-  switchChannel('voice');
+  switchChannel(getScreenParticipantIds(result.data.room).length ? 'voice' : 'text');
   peerManager = new PeerManager({
     socket: socketClient,
     selfId,
@@ -1524,11 +1783,13 @@ function selectScreenParticipant(participantId) {
 function updateScreenStageControls() {
   const tiles = [...document.querySelectorAll('[data-screen-tile]')];
   const hasTiles = tiles.length > 0;
+  const hasAvailableScreens = getScreenParticipantIds(currentRoom).length > 0 || sharingScreen;
   if (!hasTiles && document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
   if (!hasTiles) elements.screenStage.style.removeProperty('--screen-aspect-ratio');
   elements.screenStage.dataset.active = String(hasTiles);
   window.requestAnimationFrame(fitScreenStage);
-  elements.screenEmptyStage.hidden = hasTiles;
+  elements.screenEmptyStage.hidden = hasTiles || hasAvailableScreens;
+  if (elements.screenGallery) elements.screenGallery.hidden = hasTiles || !hasAvailableScreens;
   elements.screenFullscreen.disabled = !hasTiles;
   elements.screenVolume.disabled = screenAudioSourceIds.size === 0;
   elements.screenAudioStatus.textContent = hasTiles
@@ -1801,6 +2062,20 @@ function renderDiscoveredPeers(peers = []) {
   }
 }
 
+async function viewOwnScreen() {
+  const previousParticipantId = watchingScreenParticipantId;
+  watchingScreenParticipantId = null;
+  if (previousParticipantId) {
+    removeScreenStream(previousParticipantId);
+    try {
+      await socketClient?.unsubscribeScreen(previousParticipantId);
+    } catch {
+      // A transmissão pode ter terminado enquanto o usuário alternava de tela.
+    }
+  }
+  if (peerManager?.screenStream) renderScreenStream(selfId, peerManager.screenStream, { muted: true });
+}
+
 async function discoverNearbyRooms({ announce = false } = {}) {
   if (!elements.networkDiscover || !window.voiceRoom?.discoverNetworkPeers) return;
   elements.networkDiscover.disabled = true;
@@ -1951,6 +2226,10 @@ async function createOrJoin(action) {
 }
 
 async function toggleMicrophone() {
+  if (forcedMutedUntil && forcedMutedUntil > Date.now()) {
+    showNotice('Você está mutado temporariamente por votação.', 'warning');
+    return;
+  }
   if (deafened) {
     showNotice('Desative o ensurdecer para ativar o microfone.', 'warning');
     return;
@@ -2028,6 +2307,7 @@ async function toggleScreen() {
     sharingScreen = true;
     renderScreenStream(selfId, stream, { muted: true });
     renderRoom(currentRoom);
+    switchChannel('voice');
   } catch (error) {
     if (error.name !== 'AbortError') showNotice(error.message || 'Não foi possível compartilhar a tela.');
   }
@@ -2040,8 +2320,8 @@ async function chooseScreenSource() {
   const sources = await window.voiceRoom.getScreenSources();
   if (!sources.length) throw new Error('Nenhuma janela ou tela disponível para compartilhar.');
   elements.sourceList.replaceChildren();
-  elements.includeScreenAudio.checked = false;
-  elements.screenQuality.value = screenQuality;
+  elements.includeScreenAudio.checked = true;
+  syncScreenQualityRecommendation({ select: true });
   return new Promise((resolve, reject) => {
     const close = () => {
       elements.sourcePicker.hidden = true;
@@ -2052,7 +2332,17 @@ async function chooseScreenSource() {
       reject(new DOMException('Seleção cancelada', 'AbortError'));
     };
     elements.cancelSource.addEventListener('click', onCancel);
-    for (const source of sources) {
+    const groups = [
+      ['Telas', sources.filter((source) => source.id.startsWith('screen:'))],
+      ['Janelas', sources.filter((source) => !source.id.startsWith('screen:'))]
+    ];
+    for (const [groupName, groupSources] of groups) {
+      if (!groupSources.length) continue;
+      const heading = document.createElement('h3');
+      heading.className = 'source-group-title';
+      heading.textContent = groupName;
+      elements.sourceList.append(heading);
+      for (const source of groupSources) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'source-option';
@@ -2074,6 +2364,7 @@ async function chooseScreenSource() {
         });
       }, { once: true });
       elements.sourceList.append(button);
+      }
     }
     elements.sourcePicker.hidden = false;
   });
@@ -2355,6 +2646,35 @@ function bindEvents() {
   elements.contextMenuVolume?.addEventListener('input', () => setContextTargetVolume(elements.contextMenuVolume.value));
   elements.contextMenuMute?.addEventListener('click', toggleContextTargetMute);
   elements.contextMenuCloseStream?.addEventListener('click', () => closeContextScreen().catch(() => {}));
+  elements.contextMenuWatch?.addEventListener('click', () => watchContextTransmission().catch(() => {}));
+  elements.contextVoteMute?.addEventListener('click', () => startContextVote('mute', 30));
+  elements.contextVoteBanTemp?.addEventListener('click', () => startContextVote('ban', Number(elements.contextBanSeconds.value) || 60));
+  elements.contextVoteBanPermanent?.addEventListener('click', () => startContextVote('ban', 0));
+  elements.settingsAudioTab?.addEventListener('click', () => switchSettingsPane('audio'));
+  elements.settingsRoomTab?.addEventListener('click', () => switchSettingsPane('room'));
+  elements.roomChatNameSave?.addEventListener('click', async () => {
+    const response = await socketClient?.updateRoomSettings(elements.roomChatName.value);
+    if (!response?.ok) showNotice(responseError(response));
+    else showNotice('Nome do chat atualizado.', 'success');
+  });
+  elements.roomModeratorSelect?.addEventListener('change', syncModeratorButton);
+  elements.roomModeratorToggle?.addEventListener('click', async () => {
+    const participantId = elements.roomModeratorSelect.value;
+    const allowed = !currentRoom?.moderatorParticipantIds?.includes(participantId);
+    const response = await socketClient?.setRoomModerator(participantId, allowed);
+    if (!response?.ok) showNotice(responseError(response));
+  });
+  elements.roomBansRefresh?.addEventListener('click', loadRoomBans);
+  elements.voteYes?.addEventListener('click', async () => {
+    const response = await socketClient?.castVote(activeVote?.voteId, true);
+    if (!response?.ok) showNotice(responseError(response), 'warning');
+    else elements.voteActions.hidden = true;
+  });
+  elements.voteNo?.addEventListener('click', async () => {
+    const response = await socketClient?.castVote(activeVote?.voteId, false);
+    if (!response?.ok) showNotice(responseError(response), 'warning');
+    else elements.voteActions.hidden = true;
+  });
   document.addEventListener('click', (event) => {
     if (!elements.contextMenu?.hidden && !event.target.closest('#context-menu')) closeContextMenu();
   });
@@ -2399,6 +2719,31 @@ function handleSocketEvent(event, payload) {
       chatMessages.push(payload.message);
       renderChatMessage(payload.message);
     }
+    return;
+  }
+  if (event === 'vote:state') {
+    renderVote(payload?.vote);
+    return;
+  }
+  if (event === 'moderation:forced-mute') {
+    forcedMutedUntil = Number(payload?.until) || null;
+    if (forcedMutedUntil) {
+      setMicrophoneMuted(true).catch(() => {});
+      showPresenceToast('Você foi mutado por 30 segundos após votação.', 'leave');
+      window.setTimeout(() => {
+        forcedMutedUntil = null;
+        renderVoiceControls();
+      }, Math.max(0, forcedMutedUntil - Date.now()));
+    } else {
+      renderVoiceControls();
+      showPresenceToast('Seu mute temporário terminou.', 'join');
+    }
+    return;
+  }
+  if (event === 'moderation:banned') {
+    const expiry = payload?.ban?.expiresAt;
+    showNotice(expiry ? `Você foi banido até ${new Date(expiry).toLocaleString('pt-BR')}.` : 'Você foi banido permanentemente desta sala.', 'error', 10_000);
+    leaveRoom({ notifyServer: false, stopHost: false });
     return;
   }
   if (event === 'room:host-ended') {
