@@ -181,7 +181,8 @@ class RoomStore {
         connected: Boolean(participant.socketId)
       })),
       screenSharingParticipantIds: [...room.screenSharingParticipantIds],
-      screenSharingParticipantId: room.screenSharingParticipantIds[0] || null
+      screenSharingParticipantId: room.screenSharingParticipantIds[0] || null,
+      createdAt: room.createdAt
     };
   }
 

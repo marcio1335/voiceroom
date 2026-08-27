@@ -9,7 +9,7 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="app-header">
+      <header class="window-titlebar">
         <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true"><img src="../../assets/voice-icon.png" alt="" /></div>
           <div class="brand-copy">
@@ -18,16 +18,21 @@
           </div>
         </div>
 
-        <div class="header-tools">
+        <div class="window-tools">
+          <span id="status" class="status" data-type="info">Pronto.</span>
           <button id="theme-toggle" class="header-icon" type="button" aria-label="Alternar tema" title="Alternar tema">☾</button>
-          <span id="status" class="status" data-type="info">Pronto para criar ou entrar em uma sala.</span>
-          <span id="latency" class="latency" aria-live="polite">Latência: —</span>
+          <span id="latency" class="sr-only" aria-live="polite">Latência: —</span>
           <button id="profile-badge" class="profile-badge" type="button" aria-label="Alterar foto de perfil" title="Clique para escolher uma foto de perfil">V</button>
           <input id="profile-photo-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" />
+          <span class="window-divider" aria-hidden="true"></span>
+          <button id="window-minimize" class="window-button" type="button" aria-label="Minimizar" title="Minimizar"><svg viewBox="0 0 16 16"><path d="M3 8.5h10" /></svg></button>
+          <button id="window-maximize" class="window-button" type="button" aria-label="Maximizar" title="Maximizar"><svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" /></svg></button>
+          <button id="window-close" class="window-button window-close" type="button" aria-label="Fechar" title="Fechar para a bandeja"><svg viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8" /></svg></button>
         </div>
       </header>
 
       <div id="notice" class="notice" role="alert" hidden></div>
+      <div id="presence-toasts" class="presence-toasts" aria-live="polite" aria-atomic="true"></div>
 
       <section id="app-update" class="app-update" hidden role="status" aria-live="polite">
         <div class="app-update-copy">
@@ -87,19 +92,12 @@
       </section>
 
       <section id="room" class="room-layout" hidden>
-        <nav class="room-rail" aria-label="Navegação da sala">
-          <span class="rail-mark" aria-hidden="true">⌁</span>
-          <button class="rail-button is-active" type="button" aria-label="Sala">⌂</button>
-          <button id="rail-screen" class="rail-button" type="button" aria-label="Transmissões">▣</button>
-          <span class="rail-spacer"></span>
-          <button id="rail-settings" class="rail-button" type="button" aria-label="Configurações">☷</button>
-        </nav>
         <aside class="room-sidebar">
           <div class="room-sidebar-top">
             <div class="room-code-row">
               <div>
                 <span class="muted small">Endereço da sala</span>
-                <strong id="active-room-ip">—</strong>
+                <button id="active-room-ip" class="room-address-copy" type="button" title="Clique para copiar">—</button>
               </div>
               <div class="room-code-actions">
                 <button id="copy-room-ip" class="icon-button" title="Copiar endereço" aria-label="Copiar endereço">⧉</button>
@@ -109,8 +107,13 @@
             <div class="sidebar-divider"></div>
             <div class="section-heading">
               <h2>Na sala</h2>
-              <span class="pill">máx. 5</span>
+              <span class="pill">máx. 10</span>
             </div>
+            <div class="room-duration-row"><span class="live-dot" aria-hidden="true"></span><span>Chamada</span><strong id="room-duration">00:00</strong></div>
+            <nav class="channel-list" aria-label="Canais da sala">
+              <button id="voice-channel" class="channel-button is-active" type="button"><svg viewBox="0 0 24 24"><path d="M5 9v6M9 6v12M13 8v8M17 5v14M21 10v4" /></svg><span>Voz e tela</span></button>
+              <button id="text-channel" class="channel-button" type="button"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v11H9l-5 3v-14Z" /></svg><span>Chat da sala</span></button>
+            </nav>
             <ul id="participants" class="participants"></ul>
           </div>
 
@@ -139,15 +142,8 @@
           </div>
         </aside>
 
-        <section class="call-card">
-          <div class="call-heading">
-            <div>
-              <span class="eyebrow">03 / CHAMADA</span>
-              <h2>Conversa em andamento</h2>
-            </div>
-            <span class="call-live"><i></i> ao vivo</span>
-          </div>
-
+        <section id="voice-view" class="call-card">
+          <div id="stage-area" class="stage-area">
           <div id="screen-stage" class="screen-stage" data-active="false">
             <div id="screen-empty-stage" class="empty-stage">
               <span class="stage-chip">▣&nbsp; sem tela</span>
@@ -155,32 +151,36 @@
               <span class="muted">Escolha uma transmissão abaixo para assistir.</span>
             </div>
           </div>
+          </div>
 
           <div class="call-controls">
             <div class="call-control-bar">
               <!-- Mantido no DOM para a lógica existente; o controle principal fica na barra lateral. -->
               <button id="microphone" hidden disabled><span class="button-icon">♩</span> Ativar microfone</button>
-              <button id="screen-share" class="screen-share-button">
-                <span class="button-icon" aria-hidden="true">▣</span>
-                <span id="screen-share-label">Compartilhar tela</span>
+              <button id="screen-share" class="player-button screen-share-button" title="Compartilhar tela" aria-label="Compartilhar tela">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                <span id="screen-share-label" class="sr-only">Compartilhar tela</span>
               </button>
-              <button id="screen-fullscreen" class="screen-fullscreen-button" disabled title="Tela cheia" aria-label="Tela cheia">
-                <span class="button-icon" aria-hidden="true">⛶</span>
+              <button id="screen-fullscreen" class="player-button screen-fullscreen-button" disabled title="Tela cheia" aria-label="Tela cheia">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
                 <span id="screen-fullscreen-label" class="sr-only">Tela cheia</span>
               </button>
               <div class="screen-volume-control">
-                <span class="screen-volume-icon" aria-hidden="true">
+                <button id="screen-volume-toggle" class="player-button screen-volume-icon" type="button" aria-label="Silenciar transmissão" title="Volume da transmissão">
                   <svg viewBox="0 0 24 24" focusable="false">
                     <path d="M4 10v4h4l5 4V6l-5 4H4Z" />
                     <path d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7.5 7.5 0 0 1 0 10" />
                   </svg>
-                </span>
+                </button>
+                <div class="volume-popover">
                 <label class="audio-range-label" for="screen-volume">
                   <span>Volume</span>
                   <output id="screen-volume-value" for="screen-volume">100%</output>
                 </label>
                 <input id="screen-volume" type="range" min="0" max="100" step="1" value="100" disabled />
+                </div>
               </div>
+              <div id="player-online" class="player-online" aria-label="Pessoas online"></div>
             </div>
             <button id="reconnect-call" class="ghost reconnect-button" hidden>↻ &nbsp;Reconectar chamadas</button>
             <div id="screen-share-list" class="screen-share-list" aria-live="polite"></div>
@@ -196,6 +196,16 @@
               <div id="screen-diagnostics-list" class="screen-diagnostics-list"></div>
             </section>
           </div>
+        </section>
+        <section id="text-view" class="chat-card" hidden>
+          <header class="chat-header"><div><strong>Chat da sala</strong><span>Somente quem estava presente recebe cada mensagem.</span></div></header>
+          <div id="chat-messages" class="chat-messages" aria-live="polite"><div id="chat-empty" class="chat-empty"><strong>Comece a conversa</strong><span>Links, mensagens e imagens leves ficam no host e são entregues apenas a quem estava na sala.</span></div></div>
+          <form id="chat-form" class="chat-composer">
+            <button id="chat-image-open" class="chat-attach" type="button" title="Enviar imagem" aria-label="Enviar imagem"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM7 15l3-3 3 3 2-2 3 3M8 9h.01"/></svg></button>
+            <input id="chat-image-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" />
+            <input id="chat-input" maxlength="2000" autocomplete="off" placeholder="Mensagem para a sala" aria-label="Mensagem" />
+            <button class="chat-send" type="submit" aria-label="Enviar"><svg viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2-8-8-2Z"/></svg></button>
+          </form>
         </section>
       </section>
 
@@ -267,6 +277,10 @@
               <span id="app-update-settings-status" class="small muted">Verifique se há uma nova versão.</span>
               <button id="app-update-check" class="ghost" type="button">Verificar atualizações</button>
             </div>
+          </section>
+          <section class="settings-section" aria-labelledby="presence-settings-title">
+            <div id="presence-settings-title" class="settings-section-title">AVISOS DA SALA</div>
+            <label class="audio-option"><input id="presence-notifications" type="checkbox" checked /><span>Sons e notificações de entrada e saída</span></label>
           </section>
           <div class="settings-footer"><button id="audio-settings-reset" class="ghost" type="button">Restaurar padrão</button><button id="audio-settings-apply" class="primary" type="button">Aplicar</button></div>
         </div>

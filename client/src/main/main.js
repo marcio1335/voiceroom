@@ -27,6 +27,7 @@ function signalingOrigin(value) {
 }
 
 const localServer = new LocalServerController({
+  historyFile: path.join(app.getPath('userData'), 'chat-history.json'),
   onState: (state) => {
     if (mainWindow?.webContents && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('local-server:state', state);
@@ -182,9 +183,12 @@ function createWindow() {
     minWidth: 900,
     minHeight: 640,
     show: false,
+    frame: false,
+    transparent: true,
+    roundedCorners: true,
     icon: path.join(__dirname, '..', '..', 'assets', 'voice-icon.png'),
     autoHideMenuBar: true,
-    backgroundColor: '#0e1117',
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -212,6 +216,8 @@ function createWindow() {
     mainWindow.setSkipTaskbar(true);
   });
   mainWindow.on('show', () => mainWindow.setSkipTaskbar(false));
+  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized', true));
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized', false));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
     return { action: 'deny' };
@@ -240,6 +246,15 @@ app.whenReady().then(() => {
   );
 
   ipcMain.handle('app:get-version', () => app.getVersion());
+  ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+  ipcMain.handle('window:toggle-maximize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return mainWindow.isMaximized();
+  });
+  ipcMain.handle('window:close', () => mainWindow?.close());
+  ipcMain.handle('window:is-maximized', () => Boolean(mainWindow?.isMaximized()));
   ipcMain.handle('app:get-update-state', () => updateState);
   ipcMain.handle('app:update-check', () => checkForUpdates({ manual: true }));
   ipcMain.handle('app:update-install', () => {

@@ -5,6 +5,16 @@ contextBridge.exposeInMainWorld('voiceRoom', Object.freeze({
   getUpdateState: () => ipcRenderer.invoke('app:get-update-state'),
   checkForUpdates: () => ipcRenderer.invoke('app:update-check'),
   installUpdate: () => ipcRenderer.invoke('app:update-install'),
+  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  isWindowMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  onWindowMaximized: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, maximized) => callback(Boolean(maximized));
+    ipcRenderer.on('window:maximized', listener);
+    return () => ipcRenderer.removeListener('window:maximized', listener);
+  },
   onUpdateState: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, state) => callback(state);

@@ -49,6 +49,7 @@ const elements = {
   screenShareLabel: document.querySelector('#screen-share-label'),
   screenVolume: document.querySelector('#screen-volume'),
   screenVolumeValue: document.querySelector('#screen-volume-value'),
+  screenVolumeToggle: document.querySelector('#screen-volume-toggle'),
   screenFullscreen: document.querySelector('#screen-fullscreen'),
   screenFullscreenLabel: document.querySelector('#screen-fullscreen-label'),
   reconnect: document.querySelector('#reconnect-call'),
@@ -69,8 +70,24 @@ const elements = {
   latency: document.querySelector('#latency'),
   notice: document.querySelector('#notice'),
   themeToggle: document.querySelector('#theme-toggle'),
-  railScreen: document.querySelector('#rail-screen'),
-  railSettings: document.querySelector('#rail-settings'),
+  windowMinimize: document.querySelector('#window-minimize'),
+  windowMaximize: document.querySelector('#window-maximize'),
+  windowClose: document.querySelector('#window-close'),
+  stageArea: document.querySelector('#stage-area'),
+  roomDuration: document.querySelector('#room-duration'),
+  voiceChannel: document.querySelector('#voice-channel'),
+  textChannel: document.querySelector('#text-channel'),
+  voiceView: document.querySelector('#voice-view'),
+  textView: document.querySelector('#text-view'),
+  playerOnline: document.querySelector('#player-online'),
+  presenceToasts: document.querySelector('#presence-toasts'),
+  presenceNotifications: document.querySelector('#presence-notifications'),
+  chatMessages: document.querySelector('#chat-messages'),
+  chatEmpty: document.querySelector('#chat-empty'),
+  chatForm: document.querySelector('#chat-form'),
+  chatInput: document.querySelector('#chat-input'),
+  chatImageOpen: document.querySelector('#chat-image-open'),
+  chatImageInput: document.querySelector('#chat-image-input'),
   appUpdate: document.querySelector('#app-update'),
   appUpdateTitle: document.querySelector('#app-update-title'),
   appUpdateMessage: document.querySelector('#app-update-message'),
@@ -126,12 +143,20 @@ const speakingMonitors = new Map();
 let speakingAudioContext = null;
 let contextMenuTarget = null;
 let lastMaximumScreenWarningAt = -Infinity;
+let previousScreenVolumeLevel = 1;
+let roomDurationTimer = null;
+let roomStartedAt = null;
+let presenceAudioContext = null;
+let presenceReady = false;
+let previousParticipants = new Map();
+let chatMessages = [];
 const participantVolumeBeforeMute = new Map();
 const PARTICIPANT_VOLUME_STORAGE_KEY = 'voiceroom.participantVolumes';
 const DISPLAY_NAME_STORAGE_KEY = 'voiceroom.displayName';
 const SCREEN_QUALITY_STORAGE_KEY = 'voiceroom.screenQuality';
 const PROFILE_AVATAR_STORAGE_KEY = 'voiceroom.profileAvatar';
 const THEME_STORAGE_KEY = 'voiceroom.theme';
+const PROFILE_ID_STORAGE_KEY = 'voiceroom.profileId';
 const MAX_PROFILE_AVATAR_LENGTH = 32_000;
 
 const AUDIO_SETTINGS_STORAGE_KEY = 'voiceroom.audioSettings';
@@ -142,7 +167,8 @@ const DEFAULT_AUDIO_SETTINGS = Object.freeze({
   processMicrophoneTest: false,
   inputGain: 1,
   pushToTalk: false,
-  pushToTalkKey: 'Space'
+  pushToTalkKey: 'Space',
+  presenceNotifications: true
 });
 
 const AUDIO_PROCESSING_LABELS = Object.freeze({
@@ -169,6 +195,7 @@ function loadAudioSettings() {
       processMicrophoneTest: saved.processMicrophoneTest === true,
       inputGain: clampInputGain(saved.inputGain),
       pushToTalk: saved.pushToTalk === true,
+      presenceNotifications: saved.presenceNotifications !== false,
       pushToTalkKey: typeof saved.pushToTalkKey === 'string' && saved.pushToTalkKey.length <= 40
         ? saved.pushToTalkKey
         : DEFAULT_AUDIO_SETTINGS.pushToTalkKey
@@ -180,6 +207,19 @@ function loadAudioSettings() {
 
 let audioSettings = loadAudioSettings();
 let profileAvatar = '';
+let profileId = '';
+
+function loadProfileId() {
+  try {
+    const saved = localStorage.getItem(PROFILE_ID_STORAGE_KEY);
+    if (saved && /^[a-f0-9-]{16,64}$/i.test(saved)) return saved;
+    const created = crypto.randomUUID();
+    localStorage.setItem(PROFILE_ID_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
 
 function normalizeAvatarData(value) {
   if (typeof value !== 'string' || value.length > MAX_PROFILE_AVATAR_LENGTH) return '';
@@ -317,6 +357,7 @@ function syncAudioSettingsControls() {
   elements.processMicrophoneTest.checked = audioSettings.processMicrophoneTest;
   elements.pushToTalk.checked = audioSettings.pushToTalk;
   elements.pushToTalkKey.textContent = formatPttKey(audioSettings.pushToTalkKey);
+  if (elements.presenceNotifications) elements.presenceNotifications.checked = audioSettings.presenceNotifications;
   elements.microphoneGain.value = String(Math.round(audioSettings.inputGain * 100));
   elements.microphoneGainValue.textContent = `${Math.round(audioSettings.inputGain * 100)}%`;
 }
@@ -329,7 +370,8 @@ function collectAudioSettingsFromControls() {
     processMicrophoneTest: elements.processMicrophoneTest.checked,
     inputGain: clampInputGain(Number(elements.microphoneGain.value) / 100),
     pushToTalk: elements.pushToTalk.checked,
-    pushToTalkKey: audioSettings.pushToTalkKey
+    pushToTalkKey: audioSettings.pushToTalkKey,
+    presenceNotifications: elements.presenceNotifications?.checked !== false
   };
 }
 
@@ -654,6 +696,179 @@ function showNotice(message, type = 'error', duration = 6_000) {
   showNotice.timeout = window.setTimeout(() => { elements.notice.hidden = true; }, duration);
 }
 
+function playPresenceTone(kind = 'join') {
+  if (!audioSettings.presenceNotifications) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    presenceAudioContext ||= new AudioContextClass({ latencyHint: 'interactive' });
+    presenceAudioContext.resume().catch(() => {});
+    const oscillator = presenceAudioContext.createOscillator();
+    const gain = presenceAudioContext.createGain();
+    const now = presenceAudioContext.currentTime;
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(kind === 'join' ? 520 : 700, now);
+    oscillator.frequency.exponentialRampToValueAtTime(kind === 'join' ? 760 : 430, now + .16);
+    gain.gain.setValueAtTime(.0001, now);
+    gain.gain.exponentialRampToValueAtTime(.09, now + .018);
+    gain.gain.exponentialRampToValueAtTime(.0001, now + .2);
+    oscillator.connect(gain).connect(presenceAudioContext.destination);
+    oscillator.start(now);
+    oscillator.stop(now + .21);
+  } catch { /* aviso visual continua disponível */ }
+}
+
+function showPresenceToast(message, kind = 'join') {
+  if (!audioSettings.presenceNotifications || !elements.presenceToasts) return;
+  playPresenceTone(kind);
+  const toast = document.createElement('div');
+  toast.className = 'presence-toast';
+  toast.dataset.kind = kind;
+  toast.textContent = message;
+  elements.presenceToasts.append(toast);
+  window.setTimeout(() => toast.remove(), 5_000);
+}
+
+function announceRoomChanges(room) {
+  const next = new Map((room?.participants || []).map((participant) => [participant.participantId, participant]));
+  if (presenceReady) {
+    for (const [id, participant] of next) {
+      if (id !== selfId && participant.connected && !previousParticipants.get(id)?.connected) {
+        showPresenceToast(`${participant.displayName} entrou na sala.`, 'join');
+      }
+    }
+    for (const [id, participant] of previousParticipants) {
+      if (id !== selfId && participant.connected && !next.get(id)?.connected) {
+        showPresenceToast(`${participant.displayName} saiu da sala.`, 'leave');
+      }
+    }
+  }
+  previousParticipants = next;
+  presenceReady = true;
+}
+
+function updateRoomDuration() {
+  if (!elements.roomDuration || !roomStartedAt) return;
+  const elapsed = Math.max(0, Math.floor((Date.now() - roomStartedAt) / 1_000));
+  const hours = Math.floor(elapsed / 3_600);
+  const minutes = Math.floor((elapsed % 3_600) / 60);
+  const seconds = elapsed % 60;
+  elements.roomDuration.textContent = hours
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function startRoomDuration(createdAt) {
+  roomStartedAt = Number(createdAt) || Date.now();
+  window.clearInterval(roomDurationTimer);
+  updateRoomDuration();
+  roomDurationTimer = window.setInterval(updateRoomDuration, 1_000);
+}
+
+function fitScreenStage() {
+  if (!elements.screenStage || !elements.stageArea) return;
+  if (document.body.classList.contains('screen-view-expanded') || elements.screenStage.dataset.active !== 'true') {
+    elements.screenStage.style.width = '100%';
+    elements.screenStage.style.height = '100%';
+    return;
+  }
+  const video = elements.screenStage.querySelector('[data-participant-video]');
+  const ratio = video?.videoWidth > 0 && video?.videoHeight > 0 ? video.videoWidth / video.videoHeight : 16 / 9;
+  const area = elements.stageArea.getBoundingClientRect();
+  if (!area.width || !area.height) return;
+  let width = area.width;
+  let height = width / ratio;
+  if (height > area.height) {
+    height = area.height;
+    width = height * ratio;
+  }
+  elements.screenStage.style.width = `${Math.floor(width)}px`;
+  elements.screenStage.style.height = `${Math.floor(height)}px`;
+}
+
+function renderPlayerOnline() {
+  if (!elements.playerOnline) return;
+  elements.playerOnline.replaceChildren();
+  for (const participant of (currentRoom?.participants || []).filter((item) => item.connected).slice(0, 10)) {
+    const avatar = document.createElement('span');
+    avatar.className = 'player-avatar';
+    avatar.title = participant.displayName;
+    renderAvatarElement(avatar, normalizeAvatarData(participant.avatar), getAvatarInitials(participant.displayName));
+    elements.playerOnline.append(avatar);
+  }
+}
+
+function switchChannel(channel) {
+  const text = channel === 'text';
+  elements.voiceView.hidden = text;
+  elements.textView.hidden = !text;
+  elements.voiceChannel.classList.toggle('is-active', !text);
+  elements.textChannel.classList.toggle('is-active', text);
+  if (text) elements.chatInput?.focus();
+  else window.requestAnimationFrame(fitScreenStage);
+}
+
+function renderChatMessage(message) {
+  if (!message || document.querySelector(`[data-chat-message="${message.id}"]`)) return;
+  elements.chatEmpty?.remove();
+  const article = document.createElement('article');
+  article.className = 'chat-message';
+  article.dataset.chatMessage = message.id;
+  const avatar = document.createElement('span');
+  avatar.className = 'chat-message-avatar';
+  renderAvatarElement(avatar, normalizeAvatarData(message.author?.avatar), getAvatarInitials(message.author?.displayName || 'V'));
+  const body = document.createElement('div');
+  body.className = 'chat-message-body';
+  const meta = document.createElement('div');
+  meta.className = 'chat-message-meta';
+  const author = document.createElement('strong');
+  author.textContent = message.author?.displayName || 'Participante';
+  const time = document.createElement('time');
+  time.textContent = new Date(message.sentAt || Date.now()).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  meta.append(author, time);
+  if (message.kind === 'image') {
+    const image = document.createElement('img');
+    image.className = 'chat-message-image';
+    image.src = message.content;
+    image.alt = `Imagem enviada por ${author.textContent}`;
+    body.append(meta, image);
+  } else {
+    const content = document.createElement('p');
+    content.className = 'chat-message-content';
+    content.textContent = message.content;
+    body.append(meta, content);
+  }
+  article.append(avatar, body);
+  elements.chatMessages.append(article);
+  elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function loadChatHistory(messages = []) {
+  chatMessages = Array.isArray(messages) ? messages : [];
+  elements.chatMessages.querySelectorAll('.chat-message').forEach((message) => message.remove());
+  for (const message of chatMessages) renderChatMessage(message);
+}
+
+async function sendChat(kind, content) {
+  const response = await socketClient?.sendChatMessage(kind, content);
+  if (!response?.ok) showNotice(responseError(response));
+}
+
+async function sendChatImage(file) {
+  if (!file) return;
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 360_000) {
+    showNotice('Use uma imagem PNG, JPG ou WebP de até 350 KB.', 'warning');
+    return;
+  }
+  const content = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Não foi possível ler a imagem.'));
+    reader.readAsDataURL(file);
+  });
+  await sendChat('image', content);
+}
+
 function warnMaximumScreenQuality() {
   const now = Date.now();
   if (now - lastMaximumScreenWarningAt < 4_500) return;
@@ -793,7 +1008,7 @@ function renderParticipants() {
     item.dataset.speaking = String(speakingParticipants.has(participant.participantId));
     const state = speakingParticipants.has(participant.participantId)
       ? '●'
-      : participant.screenSharing ? '🖥' : participant.muted ? '🔇' : participant.connected ? '●' : '○';
+      : participant.muted ? '⊘' : participant.connected ? '●' : '○';
     const stateElement = document.createElement('span');
     stateElement.className = 'participant-state';
     stateElement.setAttribute('aria-hidden', 'true');
@@ -803,22 +1018,34 @@ function renderParticipants() {
     if (participant.role === 'host') labels.push('Host');
     if (participant.participantId === selfId) labels.push('você');
     nameElement.textContent = participant.displayName + (labels.length ? ` (${labels.join(', ')})` : '');
-    const identity = document.createElement(participant.participantId === selfId ? 'span' : 'button');
+    const identity = document.createElement('button');
     identity.className = 'participant-identity';
-    if (identity instanceof HTMLButtonElement) {
-      identity.type = 'button';
-      identity.title = `Ajustar volume de ${participant.displayName}`;
-      identity.addEventListener('click', (event) => {
-        event.stopPropagation();
+    identity.type = 'button';
+    identity.title = participant.participantId === selfId && !sharingScreen
+      ? 'Clique para compartilhar sua tela'
+      : `Ajustar ${participant.displayName}`;
+    identity.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (participant.participantId === selfId && !sharingScreen) {
+        toggleScreen();
+        return;
+      }
+      if (participant.participantId !== selfId) {
         const rect = identity.getBoundingClientRect();
         openContextMenu('participant', participant.participantId, rect.left, rect.bottom + 6);
-      });
-    }
+      }
+    });
     identity.append(stateElement, nameElement);
     const statusElement = document.createElement('span');
     statusElement.className = 'participant-status';
     statusElement.setAttribute('aria-hidden', 'true');
     statusElement.textContent = state;
+    if (participant.screenSharing) {
+      const live = document.createElement('i');
+      live.className = 'participant-live';
+      live.title = 'Transmitindo ao vivo';
+      nameElement.append(live);
+    }
     item.append(identity, statusElement);
     if (participant.participantId !== selfId && participant.connected) {
       item.addEventListener('contextmenu', (event) => {
@@ -966,10 +1193,14 @@ function renderVoiceControls() {
 }
 
 function renderRoom(room) {
+  announceRoomChanges(room);
   currentRoom = room;
   if (elements.activeIp) elements.activeIp.textContent = hostIp ? `${hostIp}:${hostPort}` : '—';
   const screenParticipantIds = getScreenParticipantIds(room);
   elements.screen.disabled = !sharingScreen && screenParticipantIds.length >= 2;
+  elements.screen.dataset.sharing = String(sharingScreen);
+  elements.screen.title = sharingScreen ? 'Parar transmissão' : 'Compartilhar tela';
+  elements.screen.setAttribute('aria-label', elements.screen.title);
   if (elements.screenShareLabel) {
     elements.screenShareLabel.textContent = sharingScreen ? 'Parar tela' : 'Compartilhar tela';
   } else {
@@ -982,8 +1213,10 @@ function renderRoom(room) {
   }
   renderScreenShareList(room);
   renderParticipants();
+  renderPlayerOnline();
   peerManager?.syncParticipants(room.participants).catch((error) => showNotice(error.message));
   renderVoiceControls();
+  window.requestAnimationFrame(fitScreenStage);
 }
 
 function renderScreenShareList(room) {
@@ -1112,12 +1345,17 @@ function enterRoom(result) {
   selfId = result.data.participantId;
   roomCode = result.data.room.code || LOCAL_ROOM_CODE;
   roomRole = result.data.role || result.data.room.participants.find((participant) => participant.participantId === selfId)?.role || 'guest';
+  presenceReady = false;
+  previousParticipants = new Map();
   elements.landing.hidden = true;
   elements.room.hidden = false;
   if (elements.copyInvite) elements.copyInvite.hidden = roomRole !== 'host';
   if (elements.leave) elements.leave.textContent = roomRole === 'host' ? 'Encerrar sala' : 'Sair da sala';
   setStatus(roomRole === 'host' ? 'Sala local pronta. Envie o IP aos seus amigos.' : 'Sala conectada. Ative o microfone quando quiser.', 'success');
   renderRoom(result.data.room);
+  startRoomDuration(result.data.room.createdAt);
+  loadChatHistory(result.data.chatHistory);
+  switchChannel('voice');
   peerManager = new PeerManager({
     socket: socketClient,
     selfId,
@@ -1218,6 +1456,7 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
     const height = video.videoHeight;
     if (width > 0 && height > 0) {
       elements.screenStage.style.setProperty('--screen-aspect-ratio', `${width} / ${height}`);
+      fitScreenStage();
     }
     resumeVideo();
   };
@@ -1226,6 +1465,7 @@ function renderScreenStream(participantId, stream, { muted = false } = {}) {
   video.oncanplay = resumeVideo;
   updateScreenAspect();
   elements.screenStage.dataset.active = 'true';
+  window.requestAnimationFrame(fitScreenStage);
   const hasScreenAudio = Boolean(stream.getAudioTracks?.().length);
   if (hasScreenAudio) screenAudioSourceIds.add(participantId);
   else screenAudioSourceIds.delete(participantId);
@@ -1287,6 +1527,7 @@ function updateScreenStageControls() {
   if (!hasTiles && document.body.classList.contains('screen-view-expanded')) setScreenViewExpanded(false);
   if (!hasTiles) elements.screenStage.style.removeProperty('--screen-aspect-ratio');
   elements.screenStage.dataset.active = String(hasTiles);
+  window.requestAnimationFrame(fitScreenStage);
   elements.screenEmptyStage.hidden = hasTiles;
   elements.screenFullscreen.disabled = !hasTiles;
   elements.screenVolume.disabled = screenAudioSourceIds.size === 0;
@@ -1319,6 +1560,7 @@ function setScreenViewExpanded(expanded) {
   document.body.classList.toggle('screen-view-expanded', nextExpanded);
   elements.screenStage.dataset.expanded = String(nextExpanded);
   updateFullscreenButton();
+  window.requestAnimationFrame(fitScreenStage);
 }
 
 function toggleScreenFullscreen(participantId = selectedScreenParticipantId) {
@@ -1347,7 +1589,12 @@ function setScreenVolume(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return;
   screenVolumeLevel = Math.min(100, Math.max(0, numericValue)) / 100;
+  if (screenVolumeLevel > 0) previousScreenVolumeLevel = screenVolumeLevel;
   updateScreenVolume();
+}
+
+function toggleScreenVolume() {
+  setScreenVolume(screenVolumeLevel > 0 ? 0 : Math.round((previousScreenVolumeLevel || 1) * 100));
 }
 
 async function closeContextScreen() {
@@ -1641,7 +1888,7 @@ async function createOrJoin(action) {
       const health = await SocketClient.healthCheck(signalingUrl);
       if (!health?.ok) throw new Error('A sala local não respondeu ao health check.');
       await socketClient.connect(signalingUrl);
-      result = await socketClient.createRoom(displayName, profileAvatar || null);
+      result = await socketClient.createRoom(displayName, profileAvatar || null, profileId);
     } else {
       let parsed;
       try {
@@ -1669,7 +1916,7 @@ async function createOrJoin(action) {
         return;
       }
       await socketClient.connect(signalingUrl);
-      result = await socketClient.joinRoom(displayName, profileAvatar || null);
+      result = await socketClient.joinRoom(displayName, profileAvatar || null, profileId);
     }
     if (!result?.ok) {
       socketClient?.close();
@@ -1847,6 +2094,12 @@ async function leaveRoom({ notifyServer = true, stopHost = true } = {}) {
   peerManager?.close();
   stopAllSpeakingMonitors();
   stopLatencyMonitoring();
+  window.clearInterval(roomDurationTimer);
+  roomDurationTimer = null;
+  roomStartedAt = null;
+  presenceReady = false;
+  previousParticipants = new Map();
+  chatMessages = [];
   peerManager = null;
   selfId = null;
   roomCode = null;
@@ -1868,6 +2121,8 @@ async function leaveRoom({ notifyServer = true, stopHost = true } = {}) {
   elements.screenStage.querySelectorAll('[data-participant-audio]').forEach((audio) => audio.remove());
   elements.screenEmptyStage.hidden = false;
   elements.screenStage.dataset.active = 'false';
+  elements.screenStage.style.width = '100%';
+  elements.screenStage.style.height = '100%';
   elements.screenVolume.disabled = true;
   elements.screenFullscreen.disabled = true;
   elements.screenAudioStatus.textContent = 'Áudio da tela: desativado';
@@ -1973,8 +2228,11 @@ function bindEvents() {
   elements.themeToggle?.addEventListener('click', () => {
     applyTheme(document.body.dataset.theme === 'dark' ? 'light' : 'dark');
   });
-  elements.railScreen?.addEventListener('click', () => elements.screen?.click());
-  elements.railSettings?.addEventListener('click', openAudioSettings);
+  elements.windowMinimize?.addEventListener('click', () => window.voiceRoom?.minimizeWindow?.());
+  elements.windowMaximize?.addEventListener('click', () => window.voiceRoom?.toggleMaximizeWindow?.());
+  elements.windowClose?.addEventListener('click', () => window.voiceRoom?.closeWindow?.());
+  elements.voiceChannel?.addEventListener('click', () => switchChannel('voice'));
+  elements.textChannel?.addEventListener('click', () => switchChannel('text'));
   elements.create.addEventListener('click', () => createOrJoin('create'));
   elements.join.addEventListener('click', () => createOrJoin('join'));
   elements.hostIp?.addEventListener('input', () => {
@@ -2038,11 +2296,13 @@ function bindEvents() {
   elements.screen.addEventListener('click', toggleScreen);
   elements.reconnect.addEventListener('click', reconnectCalls);
   elements.screenVolume.addEventListener('input', () => setScreenVolume(elements.screenVolume.value));
+  elements.screenVolumeToggle?.addEventListener('click', toggleScreenVolume);
   elements.screenQuality.addEventListener('change', async () => {
     setScreenQuality(elements.screenQuality.value);
     if (screenQuality === 'maximum') warnMaximumScreenQuality();
     try { await peerManager?.setScreenQuality?.(screenQuality); } catch { /* fallback mantém o perfil atual */ }
   });
+  elements.activeIp?.addEventListener('click', () => elements.copyIp?.click());
   elements.screenDiagnosticsToggle?.addEventListener('click', () => {
     const isOpen = elements.screenDiagnostics?.hidden === false;
     setScreenDiagnosticsVisible(!isOpen);
@@ -2053,6 +2313,20 @@ function bindEvents() {
   elements.screenFullscreen.addEventListener('click', () => toggleScreenFullscreen());
   document.addEventListener('fullscreenchange', updateFullscreenButton);
   elements.leave.addEventListener('click', leaveRoom);
+  elements.presenceNotifications?.addEventListener('change', readAudioSettingsFromControls);
+  elements.chatForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const content = elements.chatInput.value.trim();
+    if (!content) return;
+    elements.chatInput.value = '';
+    await sendChat('text', content);
+  });
+  elements.chatImageOpen?.addEventListener('click', () => elements.chatImageInput?.click());
+  elements.chatImageInput?.addEventListener('change', async () => {
+    const file = elements.chatImageInput.files?.[0];
+    elements.chatImageInput.value = '';
+    try { await sendChatImage(file); } catch (error) { showNotice(error.message); }
+  });
   elements.appUpdateInstall?.addEventListener('click', installApplicationUpdate);
   elements.appUpdateCheck?.addEventListener('click', async () => {
     if (appUpdateState.status === 'downloaded') {
@@ -2093,6 +2367,7 @@ function bindEvents() {
   });
   document.addEventListener('keyup', handlePttKeyUp);
   window.addEventListener('blur', releasePtt);
+  window.addEventListener('resize', fitScreenStage);
   window.voiceRoom?.onDeepLink?.(handleDeepLink);
   window.voiceRoom?.onLocalServerState?.((state) => {
     if (state?.state === 'error') {
@@ -2119,6 +2394,13 @@ function handleSocketEvent(event, payload) {
     renderRoom(payload.room);
     return;
   }
+  if (event === 'chat:message') {
+    if (payload?.message) {
+      chatMessages.push(payload.message);
+      renderChatMessage(payload.message);
+    }
+    return;
+  }
   if (event === 'room:host-ended') {
     if (!roomCode) return;
     showNotice('O host encerrou a sala.', 'warning');
@@ -2140,12 +2422,16 @@ function handleSocketEvent(event, payload) {
   if (event === 'screen:viewer-joined') {
     if (payload.ownerParticipantId === selfId) {
       peerManager?.setScreenViewer(payload.viewerParticipantId, true).catch((error) => showNotice(error.message));
+      const viewer = currentRoom?.participants.find((participant) => participant.participantId === payload.viewerParticipantId);
+      showPresenceToast(`${viewer?.displayName || 'Alguém'} entrou na sua transmissão.`, 'join');
     }
     return;
   }
   if (event === 'screen:viewer-left') {
     if (payload.ownerParticipantId === selfId) {
       peerManager?.setScreenViewer(payload.viewerParticipantId, false).catch((error) => showNotice(error.message));
+      const viewer = currentRoom?.participants.find((participant) => participant.participantId === payload.viewerParticipantId);
+      showPresenceToast(`${viewer?.displayName || 'Alguém'} saiu da sua transmissão.`, 'leave');
     }
     return;
   }
@@ -2178,6 +2464,7 @@ function bootstrap() {
   let savedTheme = 'light';
   try { savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'light'; } catch { /* armazenamento opcional */ }
   applyTheme(savedTheme);
+  profileId = loadProfileId();
   loadLocalPreferences();
   profileAvatar = loadProfileAvatar();
   renderProfileAvatar();

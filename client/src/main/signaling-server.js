@@ -10,13 +10,16 @@ const {
 const { ERROR_CODES, EVENTS, PROTOCOL_VERSION, fail, ok } = require('../../../shared/protocol');
 const { RateLimiter } = require('../../../shared/rate-limit');
 const { RoomStore } = require('../../../shared/rooms');
+const { ChatHistoryStore } = require('../../../shared/chat-history');
 const {
   assertProtocolVersion,
   assertResumeToken,
   assertSignalPayload,
   assertTargetParticipant,
   normalizeAvatar,
+  normalizeChatMessage,
   normalizeDisplayName,
+  normalizeProfileId,
   normalizeRoomCode
 } = require('../../../shared/validation');
 
@@ -24,7 +27,7 @@ function messageFor(error) {
   const messages = {
     [ERROR_CODES.ROOM_NOT_FOUND]: 'Não foi possível localizar uma sala nesse endereço.',
     [ERROR_CODES.ROOM_EXISTS]: 'Já existe uma sala ativa neste computador.',
-    [ERROR_CODES.ROOM_FULL]: 'A sala atingiu o limite de 5 participantes.',
+    [ERROR_CODES.ROOM_FULL]: 'A sala atingiu o limite de 10 participantes.',
     [ERROR_CODES.SCREEN_BUSY]: 'A sala já atingiu o limite de 2 transmissões.',
     [ERROR_CODES.SCREEN_NOT_ACTIVE]: 'Essa transmissão não está ativa.',
     [ERROR_CODES.NOT_SCREEN_OWNER]: 'Você não é o dono do compartilhamento atual.',
@@ -49,7 +52,8 @@ function createSignalingServer({
   protocolVersion = DEFAULT_PROTOCOL_VERSION,
   allowedOrigin = '*',
   closeOnHostDisconnect = false,
-  onHostEnded = () => {}
+  onHostEnded = () => {},
+  historyFile = null
 } = {}) {
   const config = {
     host,
@@ -67,6 +71,8 @@ function createSignalingServer({
   let stopPromise = null;
 
   let io;
+  const chatHistory = new ChatHistoryStore(historyFile);
+  const profileIdsByParticipant = new Map();
   const rooms = new RoomStore({
     maxUsersPerRoom: config.maxUsersPerRoom,
     roomCodeLength: config.roomCodeLength,
@@ -129,19 +135,24 @@ function createSignalingServer({
       if (getBoundParticipant(socket)) throw new Error('ALREADY_IN_ROOM');
       if (rooms.rooms.size > 0) throw new Error('ROOM_EXISTS');
       const displayName = normalizeDisplayName(payload.displayName);
+      const requestedProfileId = payload.profileId ? normalizeProfileId(payload.profileId) : null;
       const created = rooms.createRoom(displayName, normalizeAvatar(payload.avatar), {
         code: config.roomCode || undefined
       });
+      const profileId = requestedProfileId || created.participant.participantId;
       created.participant.socketId = socket.id;
       socket.join(created.room.code);
       socket.data.participantId = created.participant.participantId;
       socket.data.roomCode = created.room.code;
       socket.data.role = 'host';
+      socket.data.profileId = profileId;
+      profileIdsByParticipant.set(created.participant.participantId, profileId);
       return {
         participantId: created.participant.participantId,
         resumeToken: created.participant.resumeToken,
         role: 'host',
-        room: rooms.serializeRoom(created.room)
+        room: rooms.serializeRoom(created.room),
+        chatHistory: chatHistory.list(created.room.code, profileId)
       };
     }, { roomAction: true }));
 
@@ -149,19 +160,24 @@ function createSignalingServer({
       assertPayload(payload);
       if (getBoundParticipant(socket)) throw new Error('ALREADY_IN_ROOM');
       const displayName = normalizeDisplayName(payload.displayName);
+      const requestedProfileId = payload.profileId ? normalizeProfileId(payload.profileId) : null;
       const code = normalizeRoomCode(payload.roomCode || config.roomCode || LOCAL_ROOM_CODE, config.roomCodeLength);
       const joined = rooms.joinRoom(code, displayName, normalizeAvatar(payload.avatar));
+      const profileId = requestedProfileId || joined.participant.participantId;
       joined.participant.socketId = socket.id;
       socket.join(code);
       socket.data.participantId = joined.participant.participantId;
       socket.data.roomCode = code;
       socket.data.role = 'guest';
+      socket.data.profileId = profileId;
+      profileIdsByParticipant.set(joined.participant.participantId, profileId);
       broadcastRoom(io, joined.room);
       return {
         participantId: joined.participant.participantId,
         resumeToken: joined.participant.resumeToken,
         role: 'guest',
-        room: rooms.serializeRoom(joined.room)
+        room: rooms.serializeRoom(joined.room),
+        chatHistory: chatHistory.list(joined.room.code, profileId)
       };
     }, { roomAction: true }));
 
@@ -174,11 +190,13 @@ function createSignalingServer({
       socket.data.participantId = resumed.participant.participantId;
       socket.data.roomCode = code;
       socket.data.role = resumed.participant.role;
+      socket.data.profileId = profileIdsByParticipant.get(resumed.participant.participantId) || null;
       broadcastRoom(io, resumed.room);
       return {
         participantId: resumed.participant.participantId,
         role: resumed.participant.role,
-        room: rooms.serializeRoom(resumed.room)
+        room: rooms.serializeRoom(resumed.room),
+        chatHistory: chatHistory.list(resumed.room.code, socket.data.profileId)
       };
     }));
 
@@ -223,6 +241,29 @@ function createSignalingServer({
       const updated = rooms.setAvatar(socket.id, normalizeAvatar(payload.avatar));
       broadcastRoom(io, updated.room);
       return { avatar: updated.participant.avatar };
+    }));
+
+    socket.on(EVENTS.CHAT_MESSAGE, withGuard(socket, EVENTS.CHAT_MESSAGE, (payload) => {
+      assertPayload(payload);
+      const found = getBoundParticipant(socket);
+      if (!found) throw new Error('NOT_IN_ROOM');
+      const { kind, content } = normalizeChatMessage(payload);
+      const audienceProfileIds = [...found.room.participants.values()]
+        .filter((participant) => participant.socketId)
+        .map((participant) => profileIdsByParticipant.get(participant.participantId));
+      const message = chatHistory.append({
+        roomCode: found.room.code,
+        author: {
+          participantId: found.participant.participantId,
+          displayName: found.participant.displayName,
+          avatar: found.participant.avatar
+        },
+        kind,
+        content,
+        audienceProfileIds
+      });
+      io.to(found.room.code).emit(EVENTS.CHAT_MESSAGE, { message, protocolVersion: PROTOCOL_VERSION });
+      return { message };
     }));
 
     for (const eventName of [EVENTS.PEER_OFFER, EVENTS.PEER_ANSWER, EVENTS.PEER_ICE]) {
@@ -321,7 +362,7 @@ function createSignalingServer({
   });
 
   io = new Server(httpServer, {
-    maxHttpBufferSize: 128 * 1024,
+    maxHttpBufferSize: 768 * 1024,
     cors: {
       origin: config.allowedOrigin === '*' ? true : config.allowedOrigin,
       methods: ['GET', 'POST']

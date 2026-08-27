@@ -20,7 +20,8 @@ const EVENTS = Object.freeze({
   SCREEN_SUBSCRIBE_REQUEST: 'screen:subscribe-request',
   SCREEN_UNSUBSCRIBE_REQUEST: 'screen:unsubscribe-request',
   SCREEN_VIEWER_JOINED: 'screen:viewer-joined',
-  SCREEN_VIEWER_LEFT: 'screen:viewer-left'
+  SCREEN_VIEWER_LEFT: 'screen:viewer-left',
+  CHAT_MESSAGE: 'chat:message'
 });
 
 const ERROR_CODES = Object.freeze({
@@ -36,6 +37,7 @@ const ERROR_CODES = Object.freeze({
   SCREEN_NOT_ACTIVE: 'SCREEN_NOT_ACTIVE',
   NOT_SCREEN_OWNER: 'NOT_SCREEN_OWNER',
   RATE_LIMITED: 'RATE_LIMITED',
+  MESSAGE_TOO_LARGE: 'MESSAGE_TOO_LARGE',
   INTERNAL_ERROR: 'INTERNAL_ERROR'
 });
 

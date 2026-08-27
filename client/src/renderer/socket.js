@@ -74,7 +74,8 @@ class SocketClient {
       'screen:started',
       'screen:stopped',
       'screen:viewer-joined',
-      'screen:viewer-left'
+      'screen:viewer-left',
+      'chat:message'
     ]) {
       this.socket.on(event, (payload) => this.onEvent(event, payload));
     }
@@ -127,16 +128,16 @@ class SocketClient {
     });
   }
 
-  async createRoom(displayName, avatar = null) {
-    const response = await this.request('room:create', { displayName, avatar });
+  async createRoom(displayName, avatar = null, profileId) {
+    const response = await this.request('room:create', { displayName, avatar, profileId });
     if (response?.ok) {
       this.resumeContext = { roomCode: LOCAL_ROOM_CODE, resumeToken: response.data.resumeToken };
     }
     return response;
   }
 
-  async joinRoom(displayName, avatar = null) {
-    const response = await this.request('room:join', { roomCode: LOCAL_ROOM_CODE, displayName, avatar });
+  async joinRoom(displayName, avatar = null, profileId) {
+    const response = await this.request('room:join', { roomCode: LOCAL_ROOM_CODE, displayName, avatar, profileId });
     if (response?.ok) {
       this.resumeContext = { roomCode: LOCAL_ROOM_CODE, resumeToken: response.data.resumeToken };
     }
@@ -157,6 +158,8 @@ class SocketClient {
   setMuted(muted) { return this.request('participant:muted', { muted }); }
 
   setProfileAvatar(avatar) { return this.request('participant:profile', { avatar }); }
+
+  sendChatMessage(kind, content) { return this.request('chat:message', { kind, content }); }
 
   sendSignal(event, targetParticipantId, signal) {
     return this.request(event, { targetParticipantId, signal });
